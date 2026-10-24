@@ -15,6 +15,8 @@ const S = {
   arrange: null, arrangeKey: null, dragId: null, thinkTimer: null,
   lastPlaySeq: 0, lastPlayRoom: null,
   lastDrawSeq: 0, lastDrawRoom: null,
+  tableCard: null, tableCardAt: 0, tableCardTimer: null, tableCardRoom: null,
+  zhangba: null, zhangbaSel: [],
 };
 
 function esc(s) {
@@ -119,6 +121,7 @@ function applyState(st) {
   if (reqId !== S.lastReq) {
     S.lastReq = reqId; S.sel = null; S.pendingSel = []; S.modalOptions = [];
     S.guicaiTopIndex = null; S.guicaiHandId = null;
+    S.zhangba = null; S.zhangbaSel = [];
     const m = $('#modal'); if (m) m.classList.add('hidden');
   }
   const pending = st.game && st.game.pending;
@@ -138,6 +141,7 @@ function applyState(st) {
     if (st.phase === 'lobby' || st.phase === 'draft') showScreen('room');
     else if (st.phase === 'playing' || st.phase === 'over') showScreen('game');
   }
+  handleTableCard(st);
   render();
   handlePlayAnim(st);
   handleDrawAnim(st);
@@ -245,9 +249,22 @@ function renderDraft(d) {
   }
   const title = d.phase === 'lord' ? '主公选将' : '选择你的武将';
   const sub = d.phase === 'lord' ? '主公可从全部主公将及三名随机非主公将中选择' : `从以下三名武将中选择一名 · 已选 ${d.pickedCount || 0}/${d.totalCount || 0}`;
+  const lordOpts = d.phase === 'lord' ? opts.filter(g => g.lord) : [];
+  const otherOpts = d.phase === 'lord' ? opts.filter(g => !g.lord) : [];
+  const pickCards = (list) => list.map(g => generalCard(g, { selected: g.id === selected, act: 'select-general' })).join('');
+  const grid = d.phase === 'lord'
+    ? `<div class="draft-section">
+         <div class="draft-section-title">主公武将 <span>${lordOpts.length} 名</span></div>
+         <div class="general-grid">${pickCards(lordOpts)}</div>
+       </div>
+       <div class="draft-section">
+         <div class="draft-section-title">非主公武将 <span>${otherOpts.length} 名</span></div>
+         <div class="general-grid">${pickCards(otherOpts)}</div>
+       </div>`
+    : `<div class="general-grid">${pickCards(opts)}</div>`;
   return `<div class="draft-wrap">
     <div class="draft-head"><div class="draft-title">${title}</div><div class="draft-sub">${sub}</div></div>
-    <div class="general-grid">${opts.map(g => generalCard(g, { selected: g.id === selected, act: 'select-general' })).join('')}</div>
+    ${grid}
     <div class="draft-actions">
       <button class="btn primary" data-act="pick-general" ${selected ? '' : 'disabled'}>确定选择</button>
       <span class="draft-sub">${selected ? '已选中：' + esc((opts.find(x => x.id === selected) || {}).name || '') : '请点击一张武将牌'}</span>
@@ -361,13 +378,19 @@ function renderGame() {
   const n = g.players.length;
   const youIndex = g.players.findIndex(p => you && p.id === you.id);
   const seats = g.players.map((p, i) => seatHtml(p, n, i, g, youIndex)).join('');
+  const currentCard = S.tableCard ? `<div class="table-current">
+      ${cardHtml(S.tableCard.card)}
+      <div class="table-current-label">${esc(S.tableCard.sourceName || '')}${(S.tableCard.targetNames || []).length ? ' 对 ' + esc(S.tableCard.targetNames.join('、')) : ''}${S.tableCard.as && S.tableCard.card && S.tableCard.as !== S.tableCard.card.name ? `（当【${esc(S.tableCard.as)}】）` : ''}</div>
+    </div>` : '';
   const center = `<div class="table-center">
     <div class="turn-info">${g.winner ? '对局结束' : (g.turn === (you && you.id) ? '<b>轮到你</b>' : (g.turnName ? '当前：<b>' + esc(g.turnName) + '</b>' : '等待开始'))}</div>
-    <div class="piles">
-      <div class="pile"><div class="pile-stack"></div><div class="pile-label">牌堆 ${g.deckCount}</div></div>
-      <div class="pile"><div class="pile-stack"></div><div class="pile-label">弃牌 ${g.discardCount}</div></div>
+    <div class="table-center-main">
+      <div class="table-card-slot">${currentCard}</div>
+      <div class="piles">
+        <div class="pile"><div class="pile-stack"></div><div class="pile-label">牌堆 ${g.deckCount}</div></div>
+        <div class="pile" ${g.discardTop ? `title="弃牌堆顶：${esc(g.discardTop.suit + g.discardTop.rank + g.discardTop.name)}"` : ''}><div class="pile-stack"></div><div class="pile-label">弃牌 ${g.discardCount}</div></div>
+      </div>
     </div>
-    ${g.discardTop ? `<div class="turn-info">弃牌堆顶：${esc(g.discardTop.suit + g.discardTop.rank + g.discardTop.name)}</div>` : ''}
   </div>`;
 
   const handOverlap = you ? (you.hand.length > 16 ? -38 : you.hand.length > 12 ? -32 : you.hand.length > 8 ? -24 : -18) : -18;
@@ -378,12 +401,13 @@ function renderGame() {
       if (pending.type === 'card') disabled = !(pending.validCards || []).some(x => x.id === c.id);
       else if (pending.type === 'cards') disabled = !(pending.validCards || []).some(x => x.id === c.id);
       else if (pending.type === 'target') disabled = true;
-      else if (pending.type === 'action') disabled = !playMap[c.id];
+      else if (pending.type === 'action') disabled = S.zhangba ? false : !playMap[c.id];
       else disabled = true;
     } else disabled = true;
     if (disabled) cls += ' disabled';
-    if (pending && pending.type === 'action' && !disabled) cls += ' playable';
+    if (pending && pending.type === 'action' && (S.zhangba || !disabled)) cls += ' playable';
     if (S.sel && S.sel.opt.cardId === c.id) cls += ' choosing';
+    if (S.zhangba && S.zhangbaSel.includes(c.id)) cls += ' choosing';
     if (S.pendingSel.includes(c.id)) cls += ' selected';
     if (pending && pending.type === 'card' && !disabled) cls += ' card-pending';
     return `<div class="${cls}" style="margin-left:${idx === 0 ? 0 : handOverlap}px" data-act="card" data-card-id="${c.id}">${cardHtml(c)}</div>`;
@@ -432,6 +456,37 @@ function startThinkClock(pending) {
 
 function stopThinkClock() {
   if (S.thinkTimer) { clearInterval(S.thinkTimer); S.thinkTimer = null; }
+}
+
+function handleTableCard(st) {
+  if (!st || !st.game) { S.tableCard = null; return; }
+  if (S.tableCardRoom !== st.code) {
+    S.tableCardRoom = st.code;
+    S.tableCard = null;
+    if (S.tableCardTimer) { clearTimeout(S.tableCardTimer); S.tableCardTimer = null; }
+  }
+  const tc = st.game.tableCard;
+  if (tc) {
+    if (!S.tableCard || S.tableCard.seq !== tc.seq) {
+      S.tableCard = tc;
+      S.tableCardAt = Date.now();
+      if (S.tableCardTimer) { clearTimeout(S.tableCardTimer); S.tableCardTimer = null; }
+    }
+    return;
+  }
+  if (!S.tableCard) return;
+  const remain = 900 - (Date.now() - (S.tableCardAt || 0));
+  if (remain > 0) {
+    if (!S.tableCardTimer) {
+      S.tableCardTimer = setTimeout(() => {
+        S.tableCard = null;
+        S.tableCardTimer = null;
+        if (S.state && S.state.game && (S.state.phase === 'playing' || S.state.phase === 'over')) renderGame();
+      }, remain);
+    }
+  } else {
+    S.tableCard = null;
+  }
 }
 
 function handlePlayAnim(st) {
@@ -511,9 +566,10 @@ function showDrawAnim(ev) {
 function seatHtml(p, n, i, g, youIndex) {
   const rel = youIndex >= 0 ? (i - youIndex + n) % n : i;
   const ang = (90 + rel * 360 / n) * Math.PI / 180;
-  const x = 50 + 42 * Math.cos(ang);
+  const x = 50 + 41 * Math.cos(ang);
   const y = 50 + 32 * Math.sin(ang);
   let cls = 'seat';
+  if (n === 8) cls += ' seat-8';
   if (p.id === g.you?.id) cls += ' is-you';
   if (p.id === g.turn) cls += ' is-turn';
   if (!p.alive) cls += ' is-dead';
@@ -540,6 +596,7 @@ function seatHtml(p, n, i, g, youIndex) {
     if (p.marks.kongcheng) marks.push(`<span class="mini-tag mark">空城×${p.marks.kongcheng}</span>`);
   }
   if (p.chained) marks.push(`<span class="mini-tag judge">横置</span>`);
+  if (p.flipped) marks.push(`<span class="mini-tag judge">翻面</span>`);
   if (p.charge !== undefined) marks.push(`<span class="mini-tag mark">充能${p.charge}</span>`);
   if (p.qingguoLevel) marks.push(`<span class="mini-tag mark">倾国${p.qingguoLevel}</span>`);
   return `<div class="${cls}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%" data-act="seat" data-pid="${p.id}">
@@ -630,6 +687,9 @@ function actionHtml(g, pending, you) {
     for (const s of (pending.skills || [])) {
       html += `<button class="skill-btn" data-act="skill" data-skill="${s.id}" title="${esc(s.desc || '')}">${esc(s.name)}</button>`;
     }
+    if ((pending.options || []).some(o => o.mode === 'zhangba')) {
+      html += `<button class="skill-btn" data-act="zhangba" title="将两张手牌当【杀】使用">丈八蛇矛</button>`;
+    }
     html += `<button class="end-btn" data-act="end">结束出牌</button>`;
   }
   if (!html) return '';
@@ -640,6 +700,10 @@ function promptHtml(g) {
   if (g.winner) return '';
   const p = g.pending;
   const you = g.you;
+  if (S.zhangba) {
+    return `<div class="prompt-bar"><div class="prompt-text">丈八蛇矛：选择两张手牌当【杀】（已选 ${S.zhangbaSel.length} / 2）</div>
+      <div class="prompt-actions"><button class="btn ghost small" data-act="cancel-zhangba">取消</button></div></div>`;
+  }
   if (S.sel) {
     const { opt, targets } = S.sel;
     const max = opt.maxTargets || 1;
@@ -854,6 +918,25 @@ async function send(action) {
 function onCard(cardId) {
   const g = S.state && S.state.game;
   if (!g) return;
+  if (S.zhangba) {
+    if (!g.you || !(g.you.hand || []).some(c => c.id === cardId)) return;
+    const i = S.zhangbaSel.indexOf(cardId);
+    if (i >= 0) S.zhangbaSel.splice(i, 1);
+    else {
+      S.zhangbaSel.push(cardId);
+      if (S.zhangbaSel.length >= 2) {
+        const first = S.zhangbaSel[0];
+        const second = S.zhangbaSel[1];
+        S.sel = { opt: { ...S.zhangba, cardId: first, extraCardId: second }, targets: [] };
+        S.zhangba = null;
+        S.zhangbaSel = [];
+        render();
+        return;
+      }
+    }
+    render();
+    return;
+  }
   const p = g.pending;
   if (p) {
     if (p.type === 'card') {
@@ -913,7 +996,7 @@ function onSeat(pid) {
     if (!(opt.targets || []).includes(pid)) return toast('该目标不能使用这张牌');
     if ((opt.maxTargets || 1) === 1) {
       S.sel = null;
-      send({ action: 'play', cardId: opt.cardId, as: opt.as, targets: [pid] });
+      send({ action: 'play', cardId: opt.cardId, as: opt.as, targets: [pid], extraCardId: opt.extraCardId });
       return;
     }
     const i = targets.indexOf(pid);
@@ -969,6 +1052,13 @@ document.addEventListener('click', (e) => {
   if (act === 'skill') return send({ action: 'skill', skill: el.dataset.skill });
   if (act === 'use-skill') return send({ action: 'skill', skill: el.dataset.skill });
   if (act === 'end') return send({ action: 'end' });
+  if (act === 'zhangba') {
+    const p = S.state && S.state.game && S.state.game.pending;
+    const o = (p && p.options || []).find(x => x.mode === 'zhangba');
+    if (!o) return toast('现在不能发动丈八蛇矛');
+    S.zhangba = o; S.zhangbaSel = []; S.sel = null; render(); return;
+  }
+  if (act === 'cancel-zhangba') { S.zhangba = null; S.zhangbaSel = []; render(); return; }
   if (act === 'swap') return send({ action: 'swap' });
   if (act === 'cancel') {
     const p = S.state?.game?.pending;
@@ -985,7 +1075,7 @@ document.addEventListener('click', (e) => {
     if (!S.sel) return;
     const { opt, targets } = S.sel;
     S.sel = null;
-    return send({ action: 'play', cardId: opt.cardId, as: opt.as, targets });
+    return send({ action: 'play', cardId: opt.cardId, as: opt.as, targets, extraCardId: opt.extraCardId });
   }
   if (act === 'confirm-cards') {
     const ids = S.pendingSel.slice();

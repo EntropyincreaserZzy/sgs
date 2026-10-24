@@ -30,6 +30,7 @@ const CARD_DEFS = {
   '火攻': { type: 'trick', kind: 'huogong', desc: '目标展示一张手牌，你可以弃置同花色牌对其造成1点火焰伤害。' },
   '铁索连环': { type: 'trick', kind: 'tiesuo', desc: '横置或重置至多两名角色；横置角色受到属性伤害时传导。' },
   '无懈可击': { type: 'trick', kind: 'wuxie', desc: '抵消一张锦囊牌的效果，或抵消另一张【无懈可击】。' },
+  '借刀杀人': { type: 'trick', kind: 'jiedao', desc: '令一名装备武器的角色对其攻击范围内另一名角色使用【杀】，否则你获得其武器。' },
 
   '诸葛连弩': { type: 'equip', subtype: 'weapon', range: 1, desc: '出牌阶段你可以使用任意张【杀】。' },
   '青釭剑': { type: 'equip', subtype: 'weapon', range: 2, desc: '你的【杀】无视防具。' },
@@ -52,42 +53,114 @@ const CARD_DEFS = {
   '的卢': { type: 'equip', subtype: 'horse+1', desc: '其他角色计算与你的距离+1。' },
   '绝影': { type: 'equip', subtype: 'horse+1', desc: '其他角色计算与你的距离+1。' },
   '爪黄飞电': { type: 'equip', subtype: 'horse+1', desc: '其他角色计算与你的距离+1。' },
+  '骅骝': { type: 'equip', subtype: 'horse+1', desc: '其他角色计算与你的距离+1。' },
 };
 
-const DECK_COUNTS = [
-  ['杀', 20], ['火杀', 5], ['雷杀', 5], ['闪', 24], ['桃', 12], ['酒', 5],
-  ['无中生有', 6], ['顺手牵羊', 5], ['过河拆桥', 6], ['决斗', 4], ['南蛮入侵', 3], ['万箭齐发', 2],
-  ['桃园结义', 2], ['五谷丰登', 3], ['乐不思蜀', 4], ['兵粮寸断', 3], ['闪电', 2], ['火攻', 3],
-  ['铁索连环', 6], ['无懈可击', 6],
-  ['诸葛连弩', 2], ['青釭剑', 1], ['雌雄双股剑', 1], ['青龙偃月刀', 1], ['丈八蛇矛', 1], ['贯石斧', 1],
-  ['方天画戟', 1], ['麒麟弓', 1], ['寒冰剑', 1], ['古锭刀', 1], ['朱雀羽扇', 1],
-  ['八卦阵', 2], ['仁王盾', 1], ['藤甲', 2], ['白银狮子', 1],
-  ['赤兔', 1], ['大宛', 1], ['紫骍', 1], ['的卢', 1], ['绝影', 1], ['爪黄飞电', 1],
-];
+// 按给定牌表精确构建：基本 85 + 锦囊 50 + 装备 25 = 160 张。
+// 说明：南蛮标题写“共3张”，按标题采用 ♣7、♠7、♠K；装备分项实列 12 武器 + 6 防具 + 7 坐骑 = 25。
+const DECK_LIST = [];
+const addCards = (name, suit, ranks) => {
+  for (const rank of String(ranks).split(',')) DECK_LIST.push([name, suit, rank.trim()]);
+};
+
+// 基本牌 85
+addCards('杀', '♦', '6,7,8,9,10,K');
+addCards('杀', '♣', '2,3,4,5,6,7,8,8,9,9,10,10,J,J');
+addCards('杀', '♥', '10,10,J');
+addCards('杀', '♠', '7,8,8,9,9,10,10');
+addCards('雷杀', '♣', '5,6,7,8');
+addCards('雷杀', '♠', '4,5,6,7,8');
+addCards('火杀', '♦', '4,5');
+addCards('火杀', '♥', '4,7,10');
+addCards('闪', '♦', '2,2,3,4,5,6,6,7,7,8,8,9,10,10,J,J,J');
+addCards('闪', '♥', '2,2,8,9,J,Q,K');
+addCards('桃', '♦', '2,3,Q');
+addCards('桃', '♥', '3,4,5,6,6,7,8,9,Q');
+addCards('酒', '♦', '9');
+addCards('酒', '♣', '3,9');
+addCards('酒', '♠', '3,9');
+
+// 锦囊牌 50
+addCards('桃园结义', '♥', 'A');
+addCards('万箭齐发', '♥', 'A');
+addCards('借刀杀人', '♣', 'Q,K');
+addCards('五谷丰登', '♥', '3,4');
+addCards('南蛮入侵', '♣', '7');
+addCards('南蛮入侵', '♠', '7,K');
+addCards('决斗', '♦', 'A');
+addCards('决斗', '♣', 'A');
+addCards('决斗', '♠', 'A');
+addCards('火攻', '♦', 'Q');
+addCards('火攻', '♥', '2,3');
+addCards('无中生有', '♥', '7,8,9,J');
+addCards('顺手牵羊', '♦', '3,4');
+addCards('顺手牵羊', '♠', '3,4,J');
+addCards('过河拆桥', '♣', '3,4');
+addCards('过河拆桥', '♥', 'Q');
+addCards('过河拆桥', '♠', '3,4,Q');
+addCards('铁索连环', '♣', '10,J,Q,K');
+addCards('铁索连环', '♠', 'J,Q');
+addCards('无懈可击', '♦', 'Q');
+addCards('无懈可击', '♣', 'Q,K');
+addCards('无懈可击', '♥', 'A,K');
+addCards('无懈可击', '♠', 'J,K');
+addCards('闪电', '♥', 'Q');
+addCards('闪电', '♠', 'A');
+addCards('兵粮寸断', '♣', '4');
+addCards('兵粮寸断', '♠', '10');
+addCards('乐不思蜀', '♣', '6');
+addCards('乐不思蜀', '♥', '6');
+addCards('乐不思蜀', '♠', '6');
+
+// 装备牌 25
+addCards('诸葛连弩', '♦', 'A');
+addCards('诸葛连弩', '♣', 'A');
+addCards('青釭剑', '♠', '6');
+addCards('寒冰剑', '♠', '2');
+addCards('雌雄双股剑', '♠', '2');
+addCards('古锭刀', '♠', 'A');
+addCards('青龙偃月刀', '♠', '5');
+addCards('丈八蛇矛', '♠', 'Q');
+addCards('贯石斧', '♦', '5');
+addCards('朱雀羽扇', '♦', 'A');
+addCards('方天画戟', '♦', 'Q');
+addCards('麒麟弓', '♥', '5');
+addCards('白银狮子', '♣', 'A');
+addCards('仁王盾', '♣', '2');
+addCards('藤甲', '♣', '2');
+addCards('藤甲', '♠', '2');
+addCards('八卦阵', '♣', '2');
+addCards('八卦阵', '♠', '2');
+addCards('紫骍', '♦', 'K');
+addCards('赤兔', '♥', '5');
+addCards('大宛', '♠', 'K');
+addCards('骅骝', '♦', 'K');
+addCards('的卢', '♣', '5');
+addCards('爪黄飞电', '♥', 'K');
+addCards('绝影', '♠', '5');
+
+const DECK_COUNTS = (() => {
+  const map = new Map();
+  for (const [name] of DECK_LIST) map.set(name, (map.get(name) || 0) + 1);
+  return Array.from(map.entries());
+})();
 
 function buildDeck() {
-  const deck = [];
-  let id = 0;
-  for (const [name, count] of DECK_COUNTS) {
+  return DECK_LIST.map(([name, suit, rank], index) => {
     const def = CARD_DEFS[name];
-    for (let i = 0; i < count; i++) {
-      const suit = SUITS[Math.floor(Math.random() * 4)];
-      const rank = RANKS[Math.floor(Math.random() * 13)];
-      deck.push({
-        id: 'c' + (id++),
-        name,
-        suit,
-        rank,
-        type: def.type,
-        kind: def.kind,
-        subtype: def.subtype,
-        element: def.element,
-        range: def.range,
-        delay: def.delay,
-      });
-    }
-  }
-  return deck;
+    return {
+      id: 'c' + index,
+      name,
+      suit,
+      rank,
+      type: def.type,
+      kind: def.kind,
+      subtype: def.subtype,
+      element: def.element,
+      range: def.range,
+      delay: def.delay,
+    };
+  });
 }
 
 // ============ 武将 ============
@@ -244,6 +317,6 @@ const LORD_GENERALS = GENERALS.filter(g => g.lord);
 
 module.exports = {
   SUITS, SUIT_NAMES, RANKS, isRed, isBlack,
-  CARD_DEFS, DECK_COUNTS, buildDeck,
+  CARD_DEFS, DECK_COUNTS, DECK_LIST, buildDeck,
   GENERALS, GENERAL_MAP, LORD_GENERALS,
 };

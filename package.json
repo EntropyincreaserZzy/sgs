@@ -1,0 +1,13 @@
+{
+  "name": "sanguosha-junzheng",
+  "version": "1.0.0",
+  "private": true,
+  "description": "三国杀·军争 网页版原型：5/8 人、房间码、机器人补位、32 名武将、军争牌堆",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js 8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

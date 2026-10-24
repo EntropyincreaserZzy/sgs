@@ -59,6 +59,36 @@ async function doGuanxing(g, p, extra = false) {
   g.log(`${p.name} 观星：${top.length} 张置顶，${bottom.length} 张置底`);
 }
 
+async function doTuxi(g, p, gained) {
+  if (p.used.tuxi) return;
+  const usable = (gained || []).filter(c => p.hand.includes(c));
+  if (!usable.length) return;
+  if (!(await yesNo(g, p, `是否发动【突袭】？可从刚获得的 ${usable.length} 张牌中弃置任意张，并获得等量其他角色区域内的牌`))) return;
+  const opts = [];
+  for (let i = 0; i <= usable.length; i++) opts.push({ value: String(i), label: i === 0 ? '不弃置' : `弃置 ${i} 张` });
+  const nAns = await g.askChoice(p, opts, '突袭：弃置几张刚获得的牌？');
+  const n = Math.max(0, Math.min(usable.length, parseInt(nAns, 10) || 0));
+  if (!n) return;
+  p.used.tuxi = true;
+  const chosen = n >= usable.length
+    ? usable.slice()
+    : await g.askCards(p, n, '突袭：选择要弃置的获得牌', { validCards: usable });
+  if (chosen.length < n) return;
+  for (const c of chosen) { g.removeFromHand(p, c); g.toDiscard(c); }
+  let got = 0;
+  for (let i = 0; i < n; i++) {
+    const valid = g.alive().filter(q => q !== p && g.allCardsOf(q).length);
+    if (!valid.length) break;
+    const t = await g.askTarget(p, valid, `突袭：选择获得第 ${i + 1} 张牌的角色`, { harmful: false });
+    if (!t) break;
+    const cards = g.allCardsOf(t);
+    const ans = await g.ask(p, { type: 'cards', prompt: `突袭：获得 ${t.name} 一张牌`, count: 1, validCards: cards.map(c => g.choiceCard(t, c)) });
+    const pick = (ans && ans.cardIds && ans.cardIds[0]) ? cards.find(c => c.id === ans.cardIds[0]) : cards[0];
+    if (pick) { g.removeCardFrom(t, pick); await g.gain(p, [pick], 'tuxi'); got++; }
+  }
+  g.log(`${p.name} 突袭：弃置 ${n} 张刚获得的牌，获得 ${got} 张其他角色的牌`);
+}
+
 const TRIGGERS = {
   // ================= 蜀 =================
   rende: { turnStart: (g, p) => { p.marks.rendeTargets = []; } },
@@ -123,7 +153,7 @@ const TRIGGERS = {
   longdan: {
     shaDodged: async (g, p, ctx) => {
       if (!ctx.card || ctx.card.kind !== 'shan') return;
-      const valid = g.alive().filter(q => q !== p && q !== ctx.target);
+      const valid = g.alive().filter(q => q !== p);
       const t = await g.askTarget(p, valid, '龙胆：对一名角色造成1点伤害', { optional: true });
       if (t) await g.damage(t, 1, p, ctx.card);
     },
@@ -137,9 +167,15 @@ const TRIGGERS = {
       if (!cards.length) return;
       const t = await g.askTarget(p, g.alive(), '涯角：将一张牌交给一名角色', { optional: true });
       if (t) {
-        const give = cards.shift();
-        g.gain(t, [give], 'yajiao');
+        let give = cards[0];
+        if (cards.length > 1) {
+          const ans = await g.ask(p, { type: 'cards', prompt: '涯角：选择交给的牌', count: 1, validCards: cards.map(c => g.publicCard(c)) });
+          if (ans && ans.cardIds && ans.cardIds[0]) give = cards.find(c => c.id === ans.cardIds[0]) || give;
+        }
+        cards.splice(cards.indexOf(give), 1);
+        await g.gain(t, [give], 'yajiao');
         for (const c of cards) g.toDiscard(c);
+        g.log(`涯角：${p.name} 将【${give.name}】交给 ${t.name}`);
         if (t === p) {
           const hand = await g.askCards(p, 1, '涯角：弃置一张手牌');
           g.discardCards(p, hand);
@@ -149,7 +185,20 @@ const TRIGGERS = {
       }
     },
   },
-  tieji: {},
+  tieji: {
+    turnEnd: (g, p) => {
+      if (!p.marks.tiejiReturn || !p.marks.tiejiReturn.length) return;
+      for (const id of p.marks.tiejiReturn) {
+        const idx = g.discardPile.findIndex(c => c.id === id);
+        if (idx >= 0) {
+          const c = g.discardPile.splice(idx, 1)[0];
+          p.hand.push(c);
+          g.log(`${p.name} 铁骑：收回【${c.name}】`);
+        }
+      }
+      delete p.marks.tiejiReturn;
+    },
+  },
   shushen: {
     turnStart: async (g, p) => {
       if (!(await yesNo(g, p, '是否发动【淑慎】？'))) return;
@@ -195,10 +244,11 @@ const TRIGGERS = {
   hujia: {
     beforeDamage: async (g, p, ctx) => {
       if (p.identity !== 'lord') return;
+      if (p.used.hujia) return;
       const allies = g.alive().filter(q => q !== p && q.general.faction === 'wei');
       if (!allies.length) return;
       const t = await g.askTarget(p, allies, '护驾：是否将伤害转移给一名魏势力角色？', { optional: true });
-      if (t) { ctx.transfer = t; g.draw(t, 2); g.log(`${p.name} 护驾，转移给 ${t.name}`); }
+      if (t) { p.used.hujia = true; ctx.transfer = t; g.draw(t, 2); g.log(`${p.name} 护驾，转移给 ${t.name}`); }
     },
   },
   fankui: {
@@ -211,7 +261,7 @@ const TRIGGERS = {
       const pick = (ans && ans.cardIds && ans.cardIds[0]) ? cards.find(c => c.id === ans.cardIds[0]) : null;
       if (!pick) return;
       g.removeCardFrom(ctx.source, pick);
-      g.gain(p, [pick], 'fankui');
+      await g.gain(p, [pick], 'fankui');
       const j = await g.judge(p, '反馈');
       if (j.card) {
         ctx.source.flags.fankuiSuit = j.card.suit;
@@ -244,29 +294,25 @@ const TRIGGERS = {
     gainCards: async (g, p, ctx) => {
       if (!ctx.cards || !ctx.cards.length) return;
       if (ctx.from === 'draw') return;
-      if (!(await yesNo(g, p, '是否发动【清俭】将牌交给其他角色？'))) return;
+      const pooled = ctx.cards.filter(c => p.hand.some(h => h.id === c.id));
+      if (!pooled.length) return;
+      if (!(await yesNo(g, p, '是否发动【清俭】将获得的牌交给其他角色？'))) return;
+      const nAns = await g.askChoice(p, Array.from({ length: pooled.length }, (_, i) => ({ value: String(i + 1), label: `交给 ${i + 1} 张` })), '清俭：交给几张？');
+      const n = Math.max(1, Math.min(pooled.length, parseInt(nAns, 10) || 1));
+      const cs = n >= pooled.length ? pooled.slice() : await g.askCards(p, n, '清俭：选择交给的牌', { validCards: pooled });
+      if (!cs.length) return;
       const t = await g.askTarget(p, g.alive().filter(q => q !== p), '清俭：选择一名角色', { harmful: false });
       if (!t) return;
-      const c = ctx.cards[ctx.cards.length - 1];
-      const idx = p.hand.findIndex(x => x.id === c.id);
-      if (idx >= 0) { p.hand.splice(idx, 1); g.gain(t, [c], 'qingjian'); }
+      for (const c of cs) g.removeFromHand(p, c);
+      await g.gain(t, cs, 'qingjian');
+      g.log(`${p.name} 清俭：将 ${cs.length} 张牌交给 ${t.name}`);
     },
   },
   tuxi: {
-    afterDraw: async (g, p) => {
-      if (p.used.tuxi) return;
-      if (!(await yesNo(g, p, '是否发动【突袭】弃一牌换一牌？'))) return;
-      p.used.tuxi = true;
-      const cs = await g.askCards(p, 1, '突袭：弃置一张牌');
-      if (!cs.length) return;
-      g.discardCards(p, cs);
-      const valid = g.alive().filter(q => q !== p && g.allCardsOf(q).length);
-      const t = await g.askTarget(p, valid, '突袭：选择一名角色');
-      if (!t) return;
-      const cards = g.allCardsOf(t);
-      const ans = await g.ask(p, { type: 'cards', prompt: `获得 ${t.name} 一张牌`, count: 1, validCards: cards.map(c => g.choiceCard(t, c)) });
-      const pick = (ans && ans.cardIds && ans.cardIds[0]) ? cards.find(c => c.id === ans.cardIds[0]) : cards[0];
-      if (pick) { g.removeCardFrom(t, pick); g.gain(p, [pick], 'tuxi'); }
+    afterDraw: async (g, p) => { await doTuxi(g, p, p.flags.lastDrawn || []); },
+    gainCards: async (g, p, ctx) => {
+      if (!ctx || !ctx.cards || ctx.from === 'tuxi') return;
+      await doTuxi(g, p, ctx.cards);
     },
   },
   luoyi: {
@@ -276,7 +322,7 @@ const TRIGGERS = {
       for (let i = 0; i < 3; i++) { const c = g.topCard(); if (c) cards.push(c); }
       const keep = cards.filter(c => c.type === 'basic' || (c.type === 'equip' && c.subtype === 'weapon') || c.name === '决斗');
       for (const c of cards) { if (!keep.includes(c)) g.toDiscard(c); }
-      g.gain(p, keep, 'luoyi');
+      await g.gain(p, keep, 'luoyi');
       ctx.skip = true;
       p.flags.luoyi = true;
       g.log(`${p.name} 裸衣：获得 ${keep.length} 张牌，本回合杀/决斗伤害+1`);
@@ -300,7 +346,7 @@ const TRIGGERS = {
       if (!t) return;
       const cs = await g.askCards(p, Math.min(2, p.hand.length), '遗计：选择交给的牌');
       for (const c of cs) g.removeFromHand(p, c);
-      g.gain(t, cs, 'yiji');
+      await g.gain(t, cs, 'yiji');
     },
   },
   luoshen: {
@@ -311,7 +357,7 @@ const TRIGGERS = {
       for (let i = 0; i < x; i++) {
         const { card } = await g.judge(p, '洛神');
         if (!card) break;
-        if (isBlack(card)) g.gain(p, [g.reclaim(card)], 'luoshen');
+        if (isBlack(card)) await g.gain(p, [g.reclaim(card)], 'luoshen');
         else red++;
       }
       p.charge = Math.min(7, p.charge + red);
@@ -329,17 +375,23 @@ const TRIGGERS = {
     otherTurnEnd: async (g, p, ctx) => {
       const t = ctx.player;
       if (!t || t === p) return;
-      if (!p.hand.some(c => c.type === 'basic')) return;
+      if (p.flags.xianjianSource === t.id) return;
+      const basics = p.hand.filter(c => c.type === 'basic');
+      if (!basics.length) return;
       if (!(await yesNo(g, p, `骁果：是否对 ${t.name} 发动？`))) return;
-      const cs = await g.askCards(p, 1, '骁果：弃置一张基本牌');
+      const cs = await g.askCards(p, 1, '骁果：弃置一张基本牌', { validCards: basics });
       if (!cs.length) return;
       g.discardCards(p, cs);
       const equip = Object.values(t.equip).filter(Boolean);
       const opts = [{ value: 'damage', label: '受到1点伤害' }];
       if (equip.length) opts.unshift({ value: 'equip', label: '弃置一张装备牌并令乐进摸一张' });
       const v = await g.askChoice(t, opts, '骁果：选择一项');
-      if (v === 'equip') { g.discardCards(t, [equip[0]]); g.draw(p, 1); }
-      else await g.damage(t, 1, p, { name: '骁果' });
+      if (v === 'equip') {
+        const ans = await g.ask(t, { type: 'cards', prompt: '骁果：弃置一张装备牌', count: 1, validCards: equip.map(c => g.publicCard(c)) });
+        const pick = (ans && ans.cardIds && ans.cardIds[0]) ? equip.find(c => c.id === ans.cardIds[0]) : equip[0];
+        if (pick) g.discardCards(t, [pick]);
+        g.draw(p, 1);
+      } else await g.damage(t, 1, p, { name: '骁果' });
     },
   },
   xianjian: {
@@ -347,6 +399,7 @@ const TRIGGERS = {
       if (!ctx.source) return;
       if (!(await yesNo(g, p, '是否发动【陷坚】？'))) return;
       ctx.source.flags.xianjian = p.id;
+      p.flags.xianjianSource = ctx.source.id;
       g.log(`${ctx.source.name} 本回合不能对 ${p.name} 使用牌`);
     },
   },
@@ -399,7 +452,7 @@ const TRIGGERS = {
       const cards = [];
       for (let i = 0; i < x; i++) { const c = g.topCard(); if (c) cards.push(c); }
       const keep = cards.filter(c => c.type === 'trick' || c.type === 'equip');
-      g.gain(p, keep, 'zhaxiang');
+      await g.gain(p, keep, 'zhaxiang');
       for (const c of cards) if (!keep.includes(c)) g.toDiscard(c);
       g.log(`${p.name} 诈降：亮出 ${x} 张，获得 ${keep.length} 张`);
     },
@@ -416,13 +469,16 @@ const TRIGGERS = {
       if (t) await g.loseHp(t, 1, p);
     },
   },
-  fanjian: {},
+  fanjian: { turnStart: (g, p) => { p.marks.fanjianTargets = []; } },
   guose: {},
   liuli: {
     targeted: async (g, p, ctx) => {
       if (g.turnPlayer === p) return;
       if (p.used.liuli) return;
-      if (!ctx.card || ctx.card.type !== 'basic' && !(ctx.card.type === 'trick' && !ctx.card.delay)) return;
+      const isSha = ['杀', '火杀', '雷杀'].includes(ctx.as) || (ctx.card && ctx.card.kind === 'sha');
+      const isTrick = ctx.card && ctx.card.type === 'trick' && !ctx.card.delay;
+      if (!isSha && !isTrick) return;
+      if (ctx.targets && ctx.targets.length !== 1) return;
       const valid = g.alive().filter(q => q !== p && q !== ctx.source && g.inAttackRange(p, q));
       if (!valid.length) return;
       if (!(await yesNo(g, p, '是否发动【流离】转移目标？'))) return;
@@ -430,7 +486,7 @@ const TRIGGERS = {
       const t = await g.askTarget(p, valid, '流离：选择转移目标', { harmful: true });
       if (!t) return;
       ctx.redirect = t;
-      if (ctx.card.suit === '♦') g.draw(p, 1);
+      if (ctx.card.suit === '♦') ctx.card._liuliGain = p.id;
       else {
         const cs = await g.askCards(p, 1, '流离：弃置一张牌');
         g.discardCards(p, cs);
@@ -445,12 +501,29 @@ const TRIGGERS = {
       g.discardCards(p, cs);
       const t = await g.askTarget(p, g.alive().filter(q => q !== p), '度势：令一名角色弃两张摸两张', { optional: true, harmful: false });
       if (!t) return;
-      const tc = t.hand.slice(0, 2);
+      const tc = await g.askCards(t, Math.min(2, t.hand.length), '度势：弃置两张牌');
       g.discardCards(t, tc);
       g.draw(t, tc.length);
     },
   },
-  lianying: {},
+  lianying: {
+    damageDealt: async (g, p, ctx) => {
+      if (!p.used.lianying || p.used.lianyingExtra) return;
+      if (!ctx.card || ctx.element !== 'fire') return;
+      const t = ctx.target;
+      if (!t || !t.alive) return;
+      const n = g.players.length;
+      const prev = g.players[(t.seat - 1 + n) % n];
+      const next = g.players[(t.seat + 1) % n];
+      const valid = [prev, next].filter(q => q && q.alive && q !== p && q !== t);
+      if (!valid.length) return;
+      const target = await g.askTarget(p, valid, '连营：对上家或下家造成1点火焰伤害', { optional: true, harmful: true });
+      if (!target) return;
+      p.used.lianyingExtra = true;
+      g.log(`${p.name} 连营：对 ${target.name} 造成1点火焰伤害`);
+      await g.damage(target, 1, p, { name: '连营', element: 'fire' }, 'fire');
+    },
+  },
   jieyin: {},
   xiaoji: {
     equipLost: (g, p) => {
@@ -459,7 +532,9 @@ const TRIGGERS = {
     },
   },
   tianming: {
-    targeted: async (g, p) => {
+    targeted: async (g, p, ctx) => {
+      const isSha = ctx && (['杀', '火杀', '雷杀'].includes(ctx.as) || (ctx.card && ctx.card.kind === 'sha'));
+      if (!isSha) return;
       g.draw(p, 1);
       g.log(`${p.name} 天命：摸一张牌并展示手牌`);
     },
@@ -483,7 +558,7 @@ const TRIGGERS = {
       const winner = va > vb ? pa : pb;
       const loser = va > vb ? pb : pa;
       g.log(`${winner.name} 拼点获胜，视为对 ${loser.name} 使用【杀】`);
-      await g.resolveSha(winner, { name: '杀' }, '杀', [loser]);
+      await g.resolveSha(winner, { name: '杀', ignoreArmor: true }, '杀', [loser]);
     },
   },
   xiezhi: {
@@ -498,25 +573,47 @@ const TRIGGERS = {
       if (!(await yesNo(g, t, `挟制：是否交给 ${p.name} 一张手牌并摸一张？`))) return;
       const cs = await g.askCards(t, 1, '挟制：交给刘协一张手牌');
       if (!cs.length) return;
-      g.removeFromHand(t, cs[0]); g.gain(p, cs[0] ? [cs[0]] : [], 'xiezhi'); g.draw(t, 1);
+      g.removeFromHand(t, cs[0]); await g.gain(p, cs[0] ? [cs[0]] : [], 'xiezhi'); g.draw(t, 1);
     },
   },
   wushuang: {},
   shenji: {},
-  liyu: {},
+  liyu: {
+    damageDealt: async (g, p, ctx) => {
+      const t = ctx.target;
+      if (!t || !t.alive) return;
+      const card = ctx.card;
+      if (!card || card.kind !== 'sha') return;
+      const equips = ['weapon', 'armor', 'horsePlus', 'horseMinus'].map(k => t.equip[k]).filter(Boolean);
+      if (!equips.length) return;
+      if (!(await yesNo(g, t, `利驭：是否交给 ${p.name} 一张装备牌？`))) return;
+      const ans = await g.ask(t, { type: 'cards', prompt: '利驭：选择交给吕布的装备牌', count: 1, validCards: equips.map(c => g.publicCard(c)) });
+      const give = (ans && ans.cardIds && ans.cardIds[0]) ? equips.find(c => c.id === ans.cardIds[0]) : equips[0];
+      if (!give) return;
+      g.removeCardFrom(t, give);
+      await g.gain(p, [give], 'liyu');
+      g.log(`${t.name} 交给 ${p.name}【${give.name}】`);
+      const valid = g.alive().filter(q => q !== p && q !== t);
+      const other = await g.askTarget(p, valid, '利驭：选择【决斗】的目标', { harmful: true });
+      if (other) {
+        g.log(`${p.name} 利驭：视为对 ${other.name} 使用【决斗】`);
+        await g.resolveDuel(p, other, { name: '决斗' });
+      }
+    },
+  },
   lijian: {},
   lihun: {
     playEnd: async (g, p) => {
       if (!p.marks.lihun) return;
-      const { target, count } = p.marks.lihun;
+      const { target } = p.marks.lihun;
       const t = g.players.find(x => x.id === target);
       delete p.marks.lihun;
       if (!t) return;
-      const n = Math.min(count, p.hand.length);
+      const n = Math.min(Math.max(0, t.hp), p.hand.length);
       if (!n) return;
       const cs = await g.askCards(p, n, `离魂：交还 ${n} 张牌给 ${t.name}`);
       for (const c of cs) g.removeFromHand(p, c);
-      g.gain(t, cs, 'lihun');
+      await g.gain(t, cs, 'lihun');
       g.log(`${p.name} 离魂：交还 ${cs.length} 张牌给 ${t.name}`);
     },
   },
@@ -559,15 +656,24 @@ const TRIGGERS = {
       if (!(await yesNo(g, p, '是否发动【耀武】？'))) return;
       p.limitedUsed.yaowu = true;
       const used = new Set();
+      const virtual = { name: '杀', suit: '♠', kind: 'sha' };
       while (true) {
         const valid = g.alive().filter(q => q !== p && !used.has(q.id) && !(q.skills.includes('kongcheng') && q.hand.length === 0));
         if (!valid.length) break;
         const t = await g.askTarget(p, valid, '耀武：选择【杀】的目标（可取消）', { optional: true });
         if (!t) break;
         used.add(t.id);
+        if (t.equip.armor && t.equip.armor.name === '仁王盾') {
+          g.log(`${t.name} 的【仁王盾】使黑色【杀】无效`);
+          break;
+        }
+        if (t.equip.armor && t.equip.armor.name === '藤甲') {
+          g.log(`${t.name} 的【藤甲】使普通【杀】无效`);
+          break;
+        }
         const before = t.hp;
-        const ok = await g.askShan(t, p, { name: '杀', suit: '♠', kind: 'sha' });
-        if (!ok) await g.damage(t, 1, p, { name: '杀' });
+        const ok = await g.askShan(t, p, virtual);
+        if (!ok) await g.damage(t, 1, p, virtual);
         if (t.hp < before) await g.heal(p, 1);
         else break;
       }
@@ -589,10 +695,15 @@ const TRIGGERS = {
       const t = await g.askTarget(p, valid, '祸乱：选择一名角色', { optional: true });
       if (!t) return;
       const opts = [{ value: 'damage', label: '受到1点火焰伤害' }];
-      if (t.hand.length) opts.unshift({ value: 'discard', label: `弃置 ${x} 张牌` });
+      const all = g.allCardsOf(t);
+      if (all.length) opts.unshift({ value: 'discard', label: `弃置 ${Math.min(x, all.length)} 张牌` });
       const v = await g.askChoice(t, opts, '祸乱：选择一项');
-      if (v === 'discard') g.discardCards(t, t.hand.slice(0, x));
-      else await g.damage(t, 1, p, { name: '祸乱' }, 'fire');
+      if (v === 'discard') {
+        const n = Math.min(x, all.length);
+        const ans = await g.ask(t, { type: 'cards', prompt: `祸乱：弃置 ${n} 张牌`, count: n, validCards: all.map(c => g.choiceCard(t, c)) });
+        const picked = ((ans && ans.cardIds) || []).map(id => all.find(c => c.id === id)).filter(Boolean);
+        g.discardCards(t, picked);
+      } else await g.damage(t, 1, p, { name: '祸乱' }, 'fire');
     },
   },
   mouzhu: {},
@@ -601,7 +712,7 @@ const TRIGGERS = {
       const x = ctx.handCount || 0;
       for (const q of g.alive()) {
         if (q === p) continue;
-        g.discardCards(q, q.hand.slice(0, x));
+        g.discardCards(q, g.allCardsOf(q).slice(0, x));
       }
       if (ctx.source) await g.loseHp(ctx.source, 2, p);
     },
@@ -610,16 +721,18 @@ const TRIGGERS = {
 
 const ACTIVE = {
   rende: {
-    canUse: (g, p) => p.hand.length > 0 && g.alive().some(q => q !== p && !(p.marks.rendeTargets || []).includes(q.id)),
+    canUse: (g, p) => !p.used.rende && p.hand.length > 0 && g.alive().some(q => q !== p && !(p.marks.rendeTargets || []).includes(q.id)),
     use: async (g, p) => {
       const valid = g.alive().filter(q => q !== p && !(p.marks.rendeTargets || []).includes(q.id));
       const t = await g.askTarget(p, valid, '仁德：选择一名角色', { harmful: false });
       if (!t) return;
-      const n = Math.min(2, p.hand.length);
+      const nAns = await g.askChoice(p, Array.from({ length: p.hand.length }, (_, i) => ({ value: String(i + 1), label: `交给 ${i + 1} 张` })), '仁德：交给几张手牌？');
+      const n = Math.max(1, Math.min(p.hand.length, parseInt(nAns, 10) || 1));
       const cs = await g.askCards(p, n, '仁德：选择交给的牌');
       if (!cs.length) return;
+      p.used.rende = true;
       for (const c of cs) g.removeFromHand(p, c);
-      g.gain(t, cs, 'rende');
+      await g.gain(t, cs, 'rende');
       t.marks.rende = (t.marks.rende || 0) + 1;
       p.marks.rendeTargets = p.marks.rendeTargets || [];
       p.marks.rendeTargets.push(t.id);
@@ -639,7 +752,7 @@ const ACTIVE = {
       if (v === 'cards') {
         const cs = await g.askCards(t, 2, '章武：交给刘备两张手牌');
         for (const c of cs) g.removeFromHand(t, c);
-        g.gain(p, cs, 'zhangwu');
+        await g.gain(p, cs, 'zhangwu');
       } else {
         const kind = await g.askChoice(p, [{ value: 'sha', label: '虚拟【杀】' }, { value: 'tao', label: '虚拟【桃】' }], '章武：选择基本牌');
         if (kind === 'tao') await g.heal(p, 1);
@@ -671,11 +784,13 @@ const ACTIVE = {
       const v = await g.askChoice(t, opts, '义绝：选择一项');
       if (v === 'give') {
         const give = await g.askCards(t, 1, '义绝：选择交给关羽的红色牌', { validCards: reds });
-        if (give.length) { g.removeFromHand(t, give[0]); g.gain(p, [give[0]], 'yijue'); }
+        if (give.length) { g.removeFromHand(t, give[0]); await g.gain(p, [give[0]], 'yijue'); }
         if (await yesNo(g, p, '是否令其回复1点体力？')) await g.heal(t, 1);
       } else {
         t.flags.yijue = true;
-        g.log(`${t.name} 受到义绝影响：红牌失效、受伤+1`);
+        t.flags.nonLockDisabled = true;
+        t.marks.yi = 0;
+        g.log(`${t.name} 受到义绝影响：红牌失效、非锁定技失效、受伤+1`);
       }
       p.used.yijue = true;
     },
@@ -705,19 +820,29 @@ const ACTIVE = {
     },
   },
   fanjian: {
-    canUse: (g, p) => !p.used.fanjian && p.hand.length > 0,
+    canUse: (g, p) => p.hand.length > 0 && g.alive().some(q => q !== p && !(p.marks.fanjianTargets || []).includes(q.id)),
     use: async (g, p) => {
       const cs = await g.askCards(p, 1, '反间：扣置一张手牌');
       if (!cs.length) return;
       const c = cs[0]; g.removeFromHand(p, c);
-      const t = await g.askTarget(p, g.alive().filter(q => q !== p), '反间：选择一名角色');
-      if (!t) { g.gain(p, [c]); return; }
-      p.used.fanjian = true;
+      const valid = g.alive().filter(q => q !== p && !(p.marks.fanjianTargets || []).includes(q.id));
+      const t = await g.askTarget(p, valid, '反间：选择一名角色');
+      if (!t) { await g.gain(p, [c]); return; }
+      p.marks.fanjianTargets = p.marks.fanjianTargets || [];
       const v = await g.askChoice(t, [{ value: 'guess', label: '猜测花色' }, { value: 'lose', label: '失去1点体力' }], '反间：选择一项');
-      if (v === 'lose') { await g.loseHp(t, 1); t.hand.push(c); g.log(`${t.name} 获得【间】`); return; }
+      if (v === 'lose') {
+        await g.loseHp(t, 1);
+        t.hand.push(c);
+        p.marks.fanjianTargets.push(t.id);
+        g.log(`${t.name} 获得【间】`);
+        return;
+      }
       const suit = await g.askSuit(t, '猜测【间】的花色');
-      if (suit === c.suit) { t.hand.push(c); g.log(`${t.name} 猜对，获得【间】`); }
-      else {
+      if (suit === c.suit) {
+        t.hand.push(c);
+        p.marks.fanjianTargets.push(t.id);
+        g.log(`${t.name} 猜对，获得【间】`);
+      } else {
         p.marks.jian = p.marks.jian || [];
         p.marks.jian.push(c);
         g.log(`${t.name} 猜错，受到1点伤害`);
@@ -778,7 +903,7 @@ const ACTIVE = {
       const others = g.alive().filter(q => q !== p);
       const a = await g.askTarget(p, others, '密诏：选择获得手牌的角色', { harmful: false });
       if (!a) return;
-      g.removeFromHand(p, cs[0]); g.gain(a, [cs[0]], 'mizhao');
+      g.removeFromHand(p, cs[0]); await g.gain(a, [cs[0]], 'mizhao');
       const b = await g.askTarget(p, others.filter(q => q !== a), '密诏：选择拼点对手', { harmful: true });
       if (!b) return;
       p.used.mizhao = true;
@@ -814,9 +939,9 @@ const ACTIVE = {
       p.used.chuli = true;
       const factions = new Set(g.alive().map(q => q.general.faction));
       const x = factions.size;
-      const suits = [];
+      const discarded = [];
       const own = await g.askCards(p, 1, '除疠：弃置自己一张手牌');
-      for (const c of own) { suits.push(c.suit); g.removeFromHand(p, c); g.toDiscard(c); }
+      for (const c of own) { discarded.push({ who: p, suit: c.suit }); g.removeFromHand(p, c); g.toDiscard(c); }
       const targets = [];
       for (let i = 0; i < x; i++) {
         const valid = g.alive().filter(q => q !== p && q.hand.length && !targets.includes(q));
@@ -825,13 +950,14 @@ const ACTIVE = {
         if (!t) break;
         targets.push(t);
         const cs = await pickFrom(g, p, t, `除疠：弃置 ${t.name} 一张手牌`);
-        if (cs.length) { g.removeFromHand(t, cs[0]); g.toDiscard(cs[0]); suits.push(cs[0].suit); }
+        if (cs.length) { g.removeFromHand(t, cs[0]); g.toDiscard(cs[0]); discarded.push({ who: t, suit: cs[0].suit }); }
       }
       const suit = await g.askSuit(p, '除疠：选择一种花色，弃置此花色的角色各摸一张');
-      let n = 0;
-      for (const s of suits) if (s === suit) n++;
-      // 简化为：华佗与所有弃置了该花色的角色各摸一张
-      if (n) { g.draw(p, n); g.log(`${p.name} 除疠：${n} 张同花色，摸 ${n} 张`); }
+      for (const d of discarded) {
+        if (d.suit !== suit) continue;
+        g.draw(d.who, 1);
+        g.log(`${d.who.name} 除疠：弃置了${suit}牌，摸一张`);
+      }
     },
   },
   xiongyi: {
@@ -845,6 +971,13 @@ const ACTIVE = {
         const t = await g.askTarget(p, g.alive().filter(q => q !== p), '雄异：选择获得坐骑的角色', { harmful: false });
         if (t) {
           p.equip[slot] = null;
+          if (t.equip[slot]) {
+            const old = t.equip[slot];
+            t.equip[slot] = null;
+            g.toDiscard(old);
+            g.trigger('equipLost', t, { card: old });
+            g.log(`${t.name} 弃置原坐骑【${old.name}】`);
+          }
           t.equip[slot] = mount;
           if (!t.skills.includes('xiongyi')) t.skills.push('xiongyi');
           t.limitedUsed.xiongyi = false;
@@ -852,6 +985,11 @@ const ACTIVE = {
         }
       }
       if (p.identity === 'lord') await g.heal(p, 1);
+      const lord = g.players.find(q => q.alive && q.identity === 'lord' && q.general.id === 'mateng' && g.hasSkill(q, 'luannian'));
+      if (lord && p !== lord && p.general.faction === 'qun') {
+        g.draw(lord, 1);
+        g.log(`${lord.name} 乱年：${p.name} 发动【雄异】，摸一张牌`);
+      }
     },
   },
   xiongsuan: {
@@ -865,10 +1003,21 @@ const ACTIVE = {
       if (!t) return;
       await g.damage(t, 1, p, { name: '凶算' });
       g.draw(p, 3);
-      const used = Object.keys(t.limitedUsed).filter(k => t.limitedUsed[k] && !(t === p && k === 'xiongsuan'));
+      const used = Object.keys(t.limitedUsed).filter(k => {
+        if (!t.limitedUsed[k]) return false;
+        if (t === p && k === 'xiongsuan') return false;
+        const skill = (t.general.skills || []).find(s => s.id === k);
+        return !!skill && skill.type === 'limited';
+      });
       if (used.length) {
-        p.marks.xiongsuan = { target: t, skill: used[0] };
-        g.log(`凶算：回合结束时重置 ${t.name} 的限定技`);
+        const opts = used.map(k => {
+          const skill = (t.general.skills || []).find(s => s.id === k);
+          return { value: k, label: skill ? skill.name : k };
+        });
+        const skillId = used.length === 1 ? used[0] : await g.askChoice(p, opts, '凶算：选择要重置的限定技');
+        p.marks.xiongsuan = { target: t, skill: skillId };
+        const skill = (t.general.skills || []).find(s => s.id === skillId);
+        g.log(`凶算：回合结束时重置 ${t.name} 的【${skill ? skill.name : skillId}】`);
       }
     },
   },
@@ -880,10 +1029,10 @@ const ACTIVE = {
       if (!t) return;
       const cs = await pickFrom(g, p, t, `谋诛：获得 ${t.name} 一张手牌`);
       if (!cs.length) return;
-      g.removeFromHand(t, cs[0]); g.gain(p, [cs[0]], 'mouzhu');
+      g.removeFromHand(t, cs[0]); await g.gain(p, [cs[0]], 'mouzhu');
       p.used.mouzhu = (p.used.mouzhu || 0) + 1;
       if (t.hand.length < p.hand.length) {
-        if (await yesNo(g, t, '谋诛：是否对何进使用【决斗】？')) await g.resolveDuel(t, p, { name: '决斗' });
+        if (await yesNo(g, p, `谋诛：是否令 ${t.name} 对你使用【决斗】？`)) await g.resolveDuel(t, p, { name: '决斗' });
       }
     },
   },
@@ -899,8 +1048,8 @@ const ACTIVE = {
       const c = cs[0]; g.removeFromHand(p, c);
       if (c.type === 'equip') {
         if (await yesNo(g, t, `是否使用【${c.name}】？`)) g.equipCard(t, c);
-        else g.gain(t, [c], 'jieyin');
-      } else g.gain(t, [c], 'jieyin');
+        else await g.gain(t, [c], 'jieyin');
+      } else await g.gain(t, [c], 'jieyin');
       if (p.hp !== t.hp) {
         const lower = p.hp < t.hp ? p : t;
         const higher = lower === p ? t : p;
