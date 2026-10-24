@@ -10,7 +10,7 @@ const yesNo = (g, p, prompt) => g.askChoice(p, [{ value: 'yes', label: '发动' 
 async function pickFrom(g, chooser, owner, prompt, n = 1) {
   const ans = await g.ask(chooser, {
     type: 'cards', prompt, count: n,
-    validCards: owner.hand.map(c => g.publicCard(c)),
+    validCards: owner.hand.map(c => g.choiceCard(owner, c)),
   });
   const ids = (ans && ans.cardIds) || [];
   return ids.map(id => owner.hand.find(c => c.id === id)).filter(Boolean);
@@ -27,6 +27,36 @@ async function doZhiheng(g, p) {
   if (!cs.length) return;
   g.discardCards(p, cs);
   g.draw(p, cs.length);
+}
+
+async function doGuanxing(g, p, extra = false) {
+  const n = g.alive().length < 4 ? 3 : 5;
+  const cards = [];
+  for (let i = 0; i < n; i++) { const c = g.topCard(); if (c) cards.push(c); }
+  if (!cards.length) return;
+  const ans = await g.ask(p, {
+    type: 'arrange', mode: 'guanxing',
+    cards: cards.map(c => g.publicCard(c)),
+    prompt: `观星：观看牌堆顶 ${cards.length} 张（仅你可见），拖动调整顺序；置于牌堆底的牌会放到牌堆底部。`,
+  });
+  const topIds = (ans && Array.isArray(ans.top)) ? ans.top : cards.map(c => c.id);
+  const bottomIds = (ans && Array.isArray(ans.bottom)) ? ans.bottom : [];
+  const top = [], bottom = [], seen = new Set();
+  for (const id of topIds) {
+    if (seen.has(id)) continue;
+    const c = cards.find(x => x.id === id);
+    if (c) { seen.add(id); top.push(c); }
+  }
+  for (const id of bottomIds) {
+    if (seen.has(id)) continue;
+    const c = cards.find(x => x.id === id);
+    if (c) { seen.add(id); bottom.push(c); }
+  }
+  for (const c of cards) if (!seen.has(c.id)) { seen.add(c.id); bottom.push(c); }
+  for (let i = top.length - 1; i >= 0; i--) g.deck.push(top[i]);
+  g.deck = bottom.slice().reverse().concat(g.deck);
+  if (bottom.length === cards.length && !extra) p.flags.guanxingAgain = true;
+  g.log(`${p.name} 观星：${top.length} 张置顶，${bottom.length} 张置底`);
 }
 
 const TRIGGERS = {
@@ -55,18 +85,12 @@ const TRIGGERS = {
   },
   guanxing: {
     turnStart: async (g, p) => {
-      if (!(await yesNo(g, p, '是否发动【观星】？'))) return;
-      const n = g.alive().length < 4 ? 3 : 5;
-      const cards = [];
-      for (let i = 0; i < n; i++) { const c = g.topCard(); if (c) cards.push(c); }
-      const top = [], bottom = [];
-      for (const c of cards) {
-        const v = await g.askChoice(p, [{ value: 'top', label: '置于牌堆顶' }, { value: 'bottom', label: '置于牌堆底' }], `观星：${c.suit}${c.rank}【${c.name}】`);
-        (v === 'top' ? top : bottom).push(c);
-      }
-      for (let i = top.length - 1; i >= 0; i--) g.deck.push(top[i]);
-      for (let i = bottom.length - 1; i >= 0; i--) g.deck.unshift(bottom[i]);
-      g.log(`${p.name} 观星：${top.length} 张置顶，${bottom.length} 张置底`);
+      if (await yesNo(g, p, '是否发动【观星】？')) await doGuanxing(g, p);
+    },
+    turnEnd: async (g, p) => {
+      if (!p.flags.guanxingAgain) return;
+      delete p.flags.guanxingAgain;
+      if (await yesNo(g, p, '观星：是否再次发动【观星】？')) await doGuanxing(g, p, true);
     },
   },
   kongcheng: {
@@ -183,10 +207,11 @@ const TRIGGERS = {
       const cards = g.allCardsOf(ctx.source);
       if (!cards.length) return;
       if (!(await yesNo(g, p, '是否发动【反馈】？'))) return;
-      const cs = await pickFrom(g, p, ctx.source, '反馈：获得一张牌');
-      if (!cs.length) return;
-      g.removeCardFrom(ctx.source, cs[0]);
-      g.gain(p, [cs[0]], 'fankui');
+      const ans = await g.ask(p, { type: 'cards', prompt: `反馈：获得 ${ctx.source.name} 的一张牌`, count: 1, validCards: cards.map(c => g.choiceCard(ctx.source, c)) });
+      const pick = (ans && ans.cardIds && ans.cardIds[0]) ? cards.find(c => c.id === ans.cardIds[0]) : null;
+      if (!pick) return;
+      g.removeCardFrom(ctx.source, pick);
+      g.gain(p, [pick], 'fankui');
       const j = await g.judge(p, '反馈');
       if (j.card) {
         ctx.source.flags.fankuiSuit = j.card.suit;
@@ -239,7 +264,7 @@ const TRIGGERS = {
       const t = await g.askTarget(p, valid, '突袭：选择一名角色');
       if (!t) return;
       const cards = g.allCardsOf(t);
-      const ans = await g.ask(p, { type: 'cards', prompt: `获得 ${t.name} 一张牌`, count: 1, validCards: cards.map(c => g.publicCard(c)) });
+      const ans = await g.ask(p, { type: 'cards', prompt: `获得 ${t.name} 一张牌`, count: 1, validCards: cards.map(c => g.choiceCard(t, c)) });
       const pick = (ans && ans.cardIds && ans.cardIds[0]) ? cards.find(c => c.id === ans.cardIds[0]) : cards[0];
       if (pick) { g.removeCardFrom(t, pick); g.gain(p, [pick], 'tuxi'); }
     },

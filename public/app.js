@@ -11,6 +11,10 @@ const S = {
   sel: null, pendingSel: [], selectedGeneral: null,
   data: null, encTab: 'generals', encFilter: 'all', encQuery: '',
   modalOptions: [], retry: 0, lastReq: null, view: 'home',
+  guicaiTopIndex: null, guicaiHandId: null,
+  arrange: null, arrangeKey: null, dragId: null, thinkTimer: null,
+  lastPlaySeq: 0, lastPlayRoom: null,
+  lastDrawSeq: 0, lastDrawRoom: null,
 };
 
 function esc(s) {
@@ -114,17 +118,34 @@ function applyState(st) {
   const reqId = st.game && st.game.pending ? st.game.pending.reqId : null;
   if (reqId !== S.lastReq) {
     S.lastReq = reqId; S.sel = null; S.pendingSel = []; S.modalOptions = [];
+    S.guicaiTopIndex = null; S.guicaiHandId = null;
     const m = $('#modal'); if (m) m.classList.add('hidden');
+  }
+  const pending = st.game && st.game.pending;
+  if (pending && pending.type === 'arrange') {
+    const key = pending.reqId + ':' + pending.mode + ':' + (pending.cards || []).map(c => c.id).join(',');
+    if (S.arrangeKey !== key) {
+      S.arrangeKey = key;
+      S.arrange = pending.mode === 'guanxing'
+        ? { mode: 'guanxing', top: (pending.cards || []).map(c => c.id), bottom: [] }
+        : { mode: 'guicai', order: (pending.cards || []).map(c => c.id) };
+    }
+  } else {
+    S.arrangeKey = null;
+    S.arrange = null;
   }
   if (S.view !== 'enc') {
     if (st.phase === 'lobby' || st.phase === 'draft') showScreen('room');
     else if (st.phase === 'playing' || st.phase === 'over') showScreen('game');
   }
   render();
+  handlePlayAnim(st);
+  handleDrawAnim(st);
 }
 
 function showScreen(name) {
   S.view = name;
+  if (name !== 'game') stopThinkClock();
   for (const id of ['home', 'room', 'game', 'enc']) {
     const el = $('#screen-' + id);
     if (el) el.classList.toggle('hidden', id !== name);
@@ -169,6 +190,7 @@ function renderRoom() {
     if (s.id === st.host) tags.push('<span class="tag host">房主</span>');
     if (s.isBot) tags.push('<span class="tag bot">机器人</span>');
     if (s.id === st.you) tags.push('<span class="tag you">你</span>');
+    if (s.identity) tags.push(`<span class="tag ident ${s.identity}">${identName(s.identity)}</span>`);
     if (!s.connected && !s.isBot) tags.push('<span class="tag">离线</span>');
     return `<div class="seat-card ${s.id === st.you ? 'is-you' : ''}" data-act="${s.isBot && isHost ? 'remove-bot' : 'noop'}" data-seat="${i}">
       <div class="seat-num">${i + 1}号位</div>
@@ -184,6 +206,7 @@ function renderRoom() {
         <div class="room-code-label">房间码</div>
         <div class="room-code">${esc(st.code)}</div>
         <div class="room-meta">${st.mode} 人军争 · ${st.phase === 'lobby' ? '等待玩家' : '选将阶段'}</div>
+        ${st.youIdentity ? `<div class="you-identity">你的身份 <b>${identName(st.youIdentity)}</b> · ${st.youSeat + 1}号位</div>` : ''}
       </div>
       <div class="room-actions">
         <button class="btn small" data-act="copy-code">复制房间码</button>
@@ -194,6 +217,7 @@ function renderRoom() {
     </div>
     <div class="seats-grid">${seatHtml}</div>
     ${isHost && st.phase === 'lobby' && !st.canStart ? `<p class="home-hint">还差 ${emptyCount} 人，可点击空位添加机器人补位。</p>` : ''}
+    ${st.youIdentity ? `<div class="draft-identity">你的身份：<b>${identName(st.youIdentity)}</b> · ${st.youSeat + 1}号位。请根据身份选择武将。</div>` : ''}
     ${draftHtml}
   </div>`;
   bindRoom();
@@ -231,16 +255,94 @@ function renderDraft(d) {
   </div>`;
 }
 
+const SKILL_TYPES = { lock: '锁定技', limited: '限定技', active: '主动技', trigger: '触发技', lord: '主公技', awaken: '觉醒技' };
+function skillTypeName(type) { return SKILL_TYPES[type] || '技能'; }
+
+function skillPanelHtml(g, you) {
+  const list = (you && you.skillList) || [];
+  if (!list.length) return '';
+  const items = list.map(s => {
+    const available = s.active !== false;
+    const usable = !!s.usable;
+    const activeSkill = s.type === 'active';
+    const act = usable ? `data-act="use-skill" data-skill="${s.id}"` : '';
+    return `<div class="my-skill ${activeSkill ? 'active-skill' : ''} ${usable ? 'usable' : ''} ${s.special ? 'special' : ''} ${available ? '' : 'inactive'}" data-skill-id="${s.id}" ${act} title="${usable ? '左键发动，右键查看详情' : '右键查看详情'}">
+      <span class="my-skill-name">${esc(s.name)}</span>
+      <span class="my-skill-type">${skillTypeName(s.type)}</span>
+      ${usable ? '<span class="skill-ready">可发动</span>' : ''}
+      ${s.special ? `<span class="skill-special">${esc(s.acquire || '获得')}</span>` : ''}
+      ${available ? '' : '<span class="skill-cond">未满足</span>'}
+    </div>`;
+  }).join('');
+  return `<div class="my-skills"><div class="my-skills-head">我的技能 <span>右键查看详情</span></div>${items}</div>`;
+}
+
+function showSkillDetail(id) {
+  const g = S.state && S.state.game;
+  const you = g && g.you;
+  const s = you && (you.skillList || []).find(x => x.id === id);
+  const modal = $('#skill-modal');
+  if (!s || !modal) return;
+  $('#skill-modal-title').textContent = s.name;
+  const special = s.special ? `<span class="skill-special">${esc(s.acquire || '获得')}</span>` : '';
+  const cond = s.active === false ? '<span class="skill-cond">当前条件未满足</span>' : '';
+  const usable = (s.type === 'active' || s.type === 'limited')
+    ? (s.usable ? '<span class="skill-ready">当前可发动</span>' : '<span class="skill-cond">当前时机不可发动</span>')
+    : '';
+  $('#skill-modal-body').innerHTML = `<div class="skill-detail-meta">${skillTypeName(s.type)}${special}${cond}${usable}</div><div class="skill-detail-desc">${esc(s.desc)}</div>`;
+  modal.classList.remove('hidden');
+}
+
+async function ensureData() {
+  if (S.data && S.data.generals) return S.data;
+  try {
+    const r = await fetch('/api/data');
+    S.data = await r.json();
+  } catch (e) { /* 离线时返回空 */ }
+  return S.data;
+}
+
+async function showPlayerSkills(pid) {
+  const g = S.state && S.state.game;
+  const p = g && (g.players || []).find(x => x.id === pid);
+  if (!p) return;
+  const data = await ensureData();
+  const gen = data && data.generals ? data.generals.find(x => x.id === p.general.id) : null;
+  const skills = (gen && gen.skills) || [];
+  const rows = skills.map(s => {
+    const badge = s.derived ? `<span class="skill-special">${esc(s.acquire || '获得')}</span>` : '';
+    return `<div class="other-skill"><div class="other-skill-head"><span class="other-skill-name">${esc(s.name)}</span><span class="my-skill-type">${skillTypeName(s.type)}</span>${badge}</div><div class="skill-desc">${esc(s.desc)}</div></div>`;
+  }).join('');
+  const modal = $('#skill-modal');
+  if (!modal) return;
+  $('#skill-modal-title').textContent = `${p.name} · ${p.general.name} · ${(p.seat ?? 0) + 1}号位`;
+  $('#skill-modal-body').innerHTML = rows ? `<div class="other-skill-list">${rows}</div>` : '<div class="skill-detail-desc">该武将没有技能数据</div>';
+  modal.classList.remove('hidden');
+}
+
+async function showCardDetail(name, suit, rank) {
+  const data = await ensureData();
+  const def = data && data.cards ? data.cards[name] : null;
+  const modal = $('#skill-modal');
+  if (!modal) return;
+  $('#skill-modal-title').textContent = name;
+  const type = def ? (def.type === 'basic' ? '基本牌' : def.type === 'trick' ? '锦囊牌' : '装备牌') : '';
+  const meta = [suit && rank ? `${suit}${rank}` : '', type].filter(Boolean).join(' · ');
+  $('#skill-modal-body').innerHTML = `<div class="skill-detail-meta">${meta}</div><div class="skill-detail-desc">${esc(def ? def.desc : '暂无牌面说明')}</div>`;
+  modal.classList.remove('hidden');
+}
+
 function generalCard(g, opts = {}) {
   const act = opts.act ? `data-act="${opts.act}" data-general="${g.id}"` : '';
   return `<div class="general-card ${opts.selected ? 'selected' : ''}" ${act} style="--fac:${FCOLOR[g.faction] || '#c9a45c'}">
     ${g.lord ? '<div class="general-lord">主公将</div>' : ''}
+    <div class="general-portrait"><img src="/portraits/${g.id}.jpg" alt="${esc(g.name)}" loading="lazy"></div>
     <div class="general-top">
       <div class="general-name">${esc(g.name)}</div>
       <div class="general-faction ${factionClass(g.faction)}">${FACTION[g.faction] || '群'}</div>
     </div>
     <div class="general-hp">${pips(g.hp, g.maxHp || g.hp)}</div>
-    ${(g.skills || []).map(s => `<div class="skill-line"><div class="skill-name">${esc(s.name)}${s.type === 'lord' ? ' · 主公技' : ''}</div><div class="skill-desc">${esc(s.desc)}</div></div>`).join('')}
+    ${(g.skills || []).map(s => `<div class="skill-line"><div class="skill-name">${esc(s.name)}${s.type === 'lord' ? ' · 主公技' : ''}${s.derived ? `<span class="skill-derived">${esc(s.acquire || '获得')}</span>` : ''}</div><div class="skill-desc">${esc(s.desc)}</div></div>`).join('')}
   </div>`;
 }
 
@@ -280,6 +382,8 @@ function renderGame() {
       else disabled = true;
     } else disabled = true;
     if (disabled) cls += ' disabled';
+    if (pending && pending.type === 'action' && !disabled) cls += ' playable';
+    if (S.sel && S.sel.opt.cardId === c.id) cls += ' choosing';
     if (S.pendingSel.includes(c.id)) cls += ' selected';
     if (pending && pending.type === 'card' && !disabled) cls += ' card-pending';
     return `<div class="${cls}" style="margin-left:${idx === 0 ? 0 : handOverlap}px" data-act="card" data-card-id="${c.id}">${cardHtml(c)}</div>`;
@@ -287,21 +391,121 @@ function renderGame() {
 
   const prompt = promptHtml(g);
   const action = actionHtml(g, pending, you);
+  const mySkills = skillPanelHtml(g, you);
   const log = renderLog(g);
   const picker = pickerHtml(g, pending, you);
+  const special = specialHtml(g, pending);
+  const thinkClock = pending && pending.deadline ? `<div id="think-clock" class="think-clock"><span id="think-sec">30</span><small>秒</small></div>` : '';
   const overlay = g.winner ? overlayHtml(g) : '';
 
   $('#game-root').innerHTML = `<div class="game-stage">
     <div class="game-table">${seats}${center}</div>
     <div class="hand-area"><div class="hand-inner">${handHtml || (you && you.alive === false ? '<div class="waiting-box">你已阵亡，观战中</div>' : '')}</div></div>
     ${action}
+    ${mySkills}
     ${prompt}
     ${log}
     ${picker}
+    ${special}
+    ${thinkClock}
     ${overlay}
   </div>`;
   const lb = document.querySelector('.log-body');
   if (lb) lb.scrollTop = lb.scrollHeight;
+  startThinkClock(pending);
+}
+
+function startThinkClock(pending) {
+  if (S.thinkTimer) { clearInterval(S.thinkTimer); S.thinkTimer = null; }
+  const clock = $('#think-clock');
+  if (!clock || !pending || !pending.deadline) return;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((pending.deadline - Date.now()) / 1000));
+    const sec = $('#think-sec');
+    if (sec) sec.textContent = String(left);
+    clock.classList.toggle('urgent', left > 0 && left <= 10);
+    clock.classList.toggle('expired', left <= 0);
+  };
+  tick();
+  S.thinkTimer = setInterval(tick, 250);
+}
+
+function stopThinkClock() {
+  if (S.thinkTimer) { clearInterval(S.thinkTimer); S.thinkTimer = null; }
+}
+
+function handlePlayAnim(st) {
+  if (!st || !st.game || !st.game.lastPlay) return;
+  if (S.lastPlayRoom !== st.code) { S.lastPlayRoom = st.code; S.lastPlaySeq = 0; }
+  const ev = st.game.lastPlay;
+  if (ev.seq === S.lastPlaySeq) return;
+  S.lastPlaySeq = ev.seq;
+  if (S.view === 'game') showPlayAnim(ev);
+}
+
+function showPlayAnim(ev) {
+  const old = document.getElementById('play-anim');
+  if (old) old.remove();
+  if (!ev || !ev.card) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'play-anim';
+  wrap.className = 'play-anim' + (ev.equip ? ' equip' : '');
+  const as = ev.as && ev.as !== ev.card.name ? `<div class="play-anim-as">当作【${esc(ev.as)}】</div>` : '';
+  wrap.innerHTML = `<div class="play-anim-inner"><div class="play-anim-who">${esc(ev.playerName || '')}</div><div class="play-anim-card">${cardHtml(ev.card)}</div>${as}</div>`;
+  document.body.appendChild(wrap);
+  if (ev.equip) {
+    const seat = document.querySelector(`.seat[data-pid="${ev.playerId}"] .seat-equip`);
+    if (seat) {
+      const r = seat.getBoundingClientRect();
+      const dx = (r.left + r.width / 2) - window.innerWidth / 2;
+      const dy = (r.top + r.height / 2) - window.innerHeight / 2;
+      wrap.style.setProperty('--fly-x', dx + 'px');
+      wrap.style.setProperty('--fly-y', dy + 'px');
+    }
+  }
+  setTimeout(() => wrap.remove(), ev.equip ? 1500 : 1100);
+}
+
+function handleDrawAnim(st) {
+  if (!st || !st.game || !st.game.lastDraw) return;
+  if (S.lastDrawRoom !== st.code) { S.lastDrawRoom = st.code; S.lastDrawSeq = 0; }
+  const ev = st.game.lastDraw;
+  if (ev.seq === S.lastDrawSeq) return;
+  S.lastDrawSeq = ev.seq;
+  if (S.view === 'game') showDrawAnim(ev);
+}
+
+function showDrawAnim(ev) {
+  const old = document.getElementById('draw-anim');
+  if (old) old.remove();
+  if (!ev || !ev.count) return;
+  const deck = document.querySelector('.pile');
+  const target = (ev.playerId === (S.state && S.state.game && S.state.game.you ? S.state.game.you.id : null))
+    ? document.querySelector('.hand-area')
+    : document.querySelector(`.seat[data-pid="${ev.playerId}"]`);
+  if (!deck || !target) return;
+  const d = deck.getBoundingClientRect();
+  const t = target.getBoundingClientRect();
+  const sx = d.left + d.width / 2;
+  const sy = d.top + d.height / 2;
+  const dx = (t.left + t.width / 2) - sx;
+  const dy = (t.top + t.height / 2) - sy;
+  const wrap = document.createElement('div');
+  wrap.id = 'draw-anim';
+  wrap.className = 'draw-anim';
+  const n = Math.min(4, ev.count);
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('div');
+    c.className = 'draw-anim-card';
+    c.style.left = (sx - 21 + i * 12) + 'px';
+    c.style.top = (sy - 29 - i * 9) + 'px';
+    c.style.setProperty('--dx', dx + 'px');
+    c.style.setProperty('--dy', dy + 'px');
+    c.style.setProperty('--delay', (i * 0.06) + 's');
+    wrap.appendChild(c);
+  }
+  document.body.appendChild(wrap);
+  setTimeout(() => wrap.remove(), 1200);
 }
 
 function seatHtml(p, n, i, g, youIndex) {
@@ -321,11 +525,12 @@ function seatHtml(p, n, i, g, youIndex) {
   if (g.pending && g.pending.type === 'target' && (g.pending.valid || []).includes(p.id)) pendingTarget = true;
   if (pendingTarget) cls += ' is-selectable';
   const ident = p.identity ? `<span class="seat-ident ${p.identity}">${identName(p.identity)}</span>` : '';
-  const equips = [];
-  for (const k of ['weapon', 'armor', 'horsePlus', 'horseMinus']) {
+  const equipDefs = [['weapon', '武器'], ['armor', '防具'], ['horsePlus', '+1马'], ['horseMinus', '-1马']];
+  const equipSlots = equipDefs.map(([k, label]) => {
     const c = p.equip && p.equip[k];
-    if (c) equips.push(`<span class="mini-tag">${esc(c.name)}</span>`);
-  }
+    if (!c) return `<span class="equip-slot empty">${label}</span>`;
+    return `<span class="equip-slot filled" data-equip-name="${esc(c.name)}" data-equip-suit="${c.suit || ''}" data-equip-rank="${c.rank || ''}" title="右键查看牌面效果">${esc(c.name)}</span>`;
+  }).join('');
   const judges = (p.judge || []).map(c => `<span class="mini-tag judge">${esc(c.name)}</span>`).join('');
   const marks = [];
   if (p.marks) {
@@ -339,22 +544,68 @@ function seatHtml(p, n, i, g, youIndex) {
   if (p.qingguoLevel) marks.push(`<span class="mini-tag mark">倾国${p.qingguoLevel}</span>`);
   return `<div class="${cls}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%" data-act="seat" data-pid="${p.id}">
     <div class="seat-top">
-      <div class="avatar ${factionClass(p.general.faction)}">${esc(p.general.name[0] || '?')}</div>
+      <div class="avatar ${factionClass(p.general.faction)}" data-avatar-pid="${p.id}" title="右键查看技能"><img src="/portraits/${p.general.id}.jpg" alt="${esc(p.general.name)}" onerror="this.remove()"><span class="avatar-letter">${esc(p.general.name[0] || '?')}</span></div>
       <div class="seat-namebox">
         <div class="seat-name" title="${esc(p.name)}">${esc(p.name)}</div>
         <div class="seat-general">${esc(p.general.name)}${p.identity === 'lord' ? ' · 主公' : ''}</div>
+        <div class="seat-pos">${(p.seat ?? 0) + 1}号位</div>
       </div>
       ${ident}
     </div>
     <div class="seat-hp">${pips(p.hp, p.maxHp)}</div>
-    <div class="seat-meta"><span>手牌 <b class="seat-handcount">${p.handCount}</b></span><span>${p.alive ? (p.id === g.turn ? '行动中' : '') : '阵亡'}</span></div>
-    <div class="seat-cards">${equips.join('')}${judges}${marks.join('')}</div>
+    <div class="seat-meta"><span>手牌 <b class="seat-handcount">${p.handCount}</b> <em class="hand-hidden">暗置</em></span><span>${p.alive ? (p.id === g.turn ? '行动中' : '') : '阵亡'}</span></div>
+    <div class="seat-equip">${equipSlots}</div>
+    <div class="seat-cards">${judges}${marks.join('')}</div>
   </div>`;
 }
 
+const CARD_ICONS = {
+  basic: '<path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  sha: '<path d="M4 20 20 4M14 4h6v6"/><path d="M4 20l4-1-3-3z"/>',
+  shan: '<path d="M12 3 20 6v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/>',
+  tao: '<path d="M12 21c-6-5-7-10-4-13 2-2 4 0 4 2 0-2 2-4 4-2 3 3 2 8-4 13z"/><path d="M12 8v7"/>',
+  jiu: '<path d="M8 3h8l-1 6c0 4 3 6 3 9H6c0-3 3-5 3-9z"/><path d="M7 18h10"/>',
+  trick: '<path d="M6 3h12v18H6z"/><path d="M9 7h6M9 11h6M9 15h4"/>',
+  delay: '<path d="M6 3h12v18H6z"/><path d="M9 7h6M9 11h6M9 15h3"/><circle cx="17" cy="17" r="2"/>',
+  bolt: '<path d="M13 2 5 14h6l-1 8 8-12h-6z"/>',
+  fire: '<path d="M12 22c-4-3-6-7-4-11 1-2 3-3 3-5 3 2 4 5 3 7 2-1 3-3 3-5 3 3 3 9-1 12-1 1-2 2-4 2z"/>',
+  chain: '<circle cx="7" cy="7" r="3"/><circle cx="17" cy="17" r="3"/><path d="M9 9l6 6"/>',
+  shield: '<path d="M12 3 20 6v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  duel: '<path d="M3 21 21 3M15 3h6v6M3 3l18 18M3 15v6h6"/>',
+  aoe: '<path d="M4 20 20 4M4 4l16 16"/><circle cx="12" cy="12" r="3"/>',
+  heal: '<path d="M12 4v16M4 12h16"/>',
+  draw: '<path d="M5 4h11v16H5z"/><path d="M9 8h4M9 12h4M9 16h2"/><path d="M17 7l3 3-3 3"/>',
+  weapon: '<path d="M14 3l7 7-4 4-7-7zM9 12l-5 5 3 3 5-5"/>',
+  armor: '<path d="M12 3 20 6v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/>',
+  horse: '<path d="M4 18c1-5 4-9 9-10l3-4 2 3 2 1-2 3h-3l-1 4 3 3M4 18h16"/>',
+};
+
+function cardArt(c) {
+  let key = 'basic';
+  if (c.type === 'basic') key = ({ '杀': 'sha', '闪': 'shan', '桃': 'tao', '酒': 'jiu' })[c.name] || 'basic';
+  else if (c.type === 'equip') key = c.subtype === 'weapon' ? 'weapon' : c.subtype === 'armor' ? 'armor' : 'horse';
+  else if (c.name === '闪电') key = 'bolt';
+  else if (c.name === '火攻') key = 'fire';
+  else if (c.name === '铁索连环') key = 'chain';
+  else if (c.name === '无懈可击') key = 'shield';
+  else if (c.name === '决斗') key = 'duel';
+  else if (c.name === '南蛮入侵' || c.name === '万箭齐发') key = 'aoe';
+  else if (c.name === '桃园结义') key = 'heal';
+  else if (c.name === '无中生有' || c.name === '五谷丰登') key = 'draw';
+  else if (c.name === '乐不思蜀' || c.name === '兵粮寸断') key = 'delay';
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">${CARD_ICONS[key] || CARD_ICONS.trick}</svg>`;
+}
+
 function cardHtml(c) {
+  if (c.hidden) {
+    return `<div class="card card-back">
+      <div class="card-name">手牌</div>
+      <div class="card-sub">暗置</div>
+    </div>`;
+  }
   const red = c.suit === '♥' || c.suit === '♦';
   return `<div class="card ${red ? 'suit-red' : 'suit-black'}">
+    <div class="card-art">${cardArt(c)}</div>
     <div class="card-corner"><span class="suit">${c.suit}</span><span class="rank">${c.rank}</span></div>
     <div class="card-name">${esc(c.name)}</div>
     <div class="card-sub">${cardTypeLabel(c)}</div>
@@ -398,6 +649,9 @@ function promptHtml(g) {
         <button class="btn small" data-act="confirm-targets" ${targets.length < min ? 'disabled' : ''}>确认</button>
         <button class="btn ghost small" data-act="cancel-targets">取消</button>
       </div></div>`;
+  }
+  if (p && (p.type === 'guicai-replace' || p.type === 'arrange')) {
+    return `<div class="prompt-bar"><div class="prompt-text">${esc(p.prompt || '请操作')}</div></div>`;
   }
   if (p && p.type === 'cards') {
     const need = p.count || 0;
@@ -470,6 +724,93 @@ function pickerHtml(g, p, you) {
   </div>`;
 }
 
+function specialHtml(g, p) {
+  if (!p) return '';
+  if (p.type === 'guicai-replace') return guicaiReplaceHtml(g, p);
+  if (p.type === 'arrange') return arrangeHtml(g, p);
+  return '';
+}
+
+function guicaiReplaceHtml(g, p) {
+  const cards = p.cards || [];
+  const hand = p.hand || [];
+  const target = (g.players || []).find(x => x.id === p.judgeTargetId);
+  const topSel = S.guicaiTopIndex;
+  const handSel = S.guicaiHandId;
+  return `<div class="overlay special-overlay">
+    <div class="overlay-card special-card" data-act="noop">
+      <div class="modal-title">鬼才 · 观看牌堆顶 ${cards.length} 张</div>
+      <div class="special-sub">判定：${esc(p.reason || '')}${target ? ' · 目标：' + esc(target.name) : ''}。牌堆顶仅你可见：先选一张牌堆顶的牌，再选一张手牌替换；也可以不换牌直接调整顺序。</div>
+      <div class="guicai-panels">
+        <div class="guicai-section">
+          <div class="arrange-zone-title">牌堆顶 <span>先选要替换的牌</span></div>
+          <div class="arrange-list">${cards.map((c, i) => `<div class="arrange-item ${topSel === i ? 'selected' : ''}" data-act="guicai-top" data-index="${i}">${cardHtml(c)}</div>`).join('') || '<div class="arrange-empty">无</div>'}</div>
+        </div>
+        <div class="guicai-section">
+          <div class="arrange-zone-title">你的手牌 <span>再选替换的手牌</span></div>
+          <div class="arrange-list">${hand.map(c => `<div class="arrange-item ${handSel === c.id ? 'selected' : ''}" data-act="guicai-hand" data-id="${c.id}">${cardHtml(c)}</div>`).join('') || '<div class="arrange-empty">无手牌</div>'}</div>
+        </div>
+      </div>
+      <div class="special-actions">
+        <button class="btn small" data-act="guicai-replace" ${topSel == null || !handSel ? 'disabled' : ''}>换牌</button>
+        <button class="btn small" data-act="guicai-arrange">不换牌，调整顺序</button>
+        <button class="btn ghost small" data-act="guicai-skip">不发动</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function arrangeHtml(g, p) {
+  const cards = p.cards || [];
+  const byId = {};
+  for (const c of cards) byId[c.id] = c;
+  let arr = S.arrange;
+  if (!arr || arr.mode !== p.mode) {
+    arr = p.mode === 'guanxing'
+      ? { mode: 'guanxing', top: cards.map(c => c.id), bottom: [] }
+      : { mode: 'guicai', order: cards.map(c => c.id) };
+    S.arrange = arr;
+  }
+  const item = (id) => {
+    const c = byId[id];
+    if (!c) return '';
+    return `<div class="arrange-item" draggable="true" data-arrange-id="${id}">${cardHtml(c)}</div>`;
+  };
+  const guicai = p.mode !== 'guanxing';
+  return `<div class="overlay special-overlay">
+    <div class="overlay-card special-card" data-act="noop">
+      <div class="modal-title">${guicai ? '鬼才 · 调整牌堆顶' : '观星 · 牌堆顶 ' + cards.length + ' 张'}</div>
+      <div class="special-sub">${guicai ? '第一张为本次判定牌。拖动卡牌调整顺序。' : '仅你可见。拖动卡牌调整顺序；把牌拖到「牌堆底」就会放到牌堆底部，顶部第一张为下一张摸到。'}</div>
+      ${guicai
+        ? `<div class="arrange-zone"><div class="arrange-zone-title">牌堆顶 <span>第一张为判定牌</span></div><div class="arrange-list" data-arrange-list="order">${arr.order.map(item).join('')}</div></div>`
+        : `<div class="arrange-columns">
+            <div class="arrange-zone"><div class="arrange-zone-title">牌堆顶 <span>先摸到</span></div><div class="arrange-list" data-arrange-list="top">${arr.top.map(item).join('')}</div></div>
+            <div class="arrange-zone"><div class="arrange-zone-title">牌堆底 <span>后摸到</span></div><div class="arrange-list" data-arrange-list="bottom">${arr.bottom.map(item).join('')}</div></div>
+          </div>`}
+      <div class="special-actions"><button class="btn" data-act="arrange-confirm">确认</button></div>
+    </div>
+  </div>`;
+}
+
+function moveArrangeCard(id, zone, beforeId) {
+  const arr = S.arrange;
+  if (!arr) return;
+  if (arr.mode === 'guanxing') {
+    for (const k of ['top', 'bottom']) {
+      const i = arr[k].indexOf(id);
+      if (i >= 0) arr[k].splice(i, 1);
+    }
+    const list = arr[zone === 'bottom' ? 'bottom' : 'top'];
+    const idx = beforeId ? list.indexOf(beforeId) : -1;
+    if (idx < 0) list.push(id); else list.splice(idx, 0, id);
+  } else {
+    const i = arr.order.indexOf(id);
+    if (i >= 0) arr.order.splice(i, 1);
+    const idx = beforeId ? arr.order.indexOf(beforeId) : -1;
+    if (idx < 0) arr.order.push(id); else arr.order.splice(idx, 0, id);
+  }
+}
+
 function overlayHtml(g) {
   const title = g.winner === 'lord' ? '主忠胜利' : g.winner === 'rebel' ? '反贼胜利' : '内奸胜利';
   const cls = g.winner === 'lord' ? 'lord' : g.winner === 'rebel' ? 'rebel' : 'spy';
@@ -528,12 +869,15 @@ function onCard(cardId) {
       else render();
       return;
     }
-    return;
+    if (p.type !== 'action') return;
   }
   if (!g.you) return;
-  if (S.sel) { S.sel = null; render(); return; }
+  if (S.sel) {
+    if (S.sel.opt.cardId === cardId) { S.sel = null; render(); return; }
+    S.sel = null;
+  }
   const opts = (g.you.playOptions || []).filter(o => o.cardId === cardId);
-  if (!opts.length) return toast('现在不能使用这张牌');
+  if (!opts.length) { render(); return toast('现在不能使用这张牌'); }
   if (opts.length === 1) chooseOption(opts[0]);
   else showOptionModal(opts);
 }
@@ -566,7 +910,7 @@ function onSeat(pid) {
   if (!g) return;
   if (S.sel) {
     const { opt, targets } = S.sel;
-    if (!(opt.targets || []).includes(pid)) return;
+    if (!(opt.targets || []).includes(pid)) return toast('该目标不能使用这张牌');
     if ((opt.maxTargets || 1) === 1) {
       S.sel = null;
       send({ action: 'play', cardId: opt.cardId, as: opt.as, targets: [pid] });
@@ -579,7 +923,10 @@ function onSeat(pid) {
     return;
   }
   const p = g.pending;
-  if (p && p.type === 'target' && (p.valid || []).includes(pid)) send({ targetId: pid });
+  if (p && p.type === 'target') {
+    if ((p.valid || []).includes(pid)) send({ targetId: pid });
+    else toast('该目标不合法');
+  }
 }
 
 function exitGame() {
@@ -590,6 +937,15 @@ function leaveRoom() {
   send({ action: 'leave' });
   setTimeout(clearSession, 120);
 }
+
+document.addEventListener('contextmenu', (e) => {
+  const skill = e.target.closest('[data-skill-id]');
+  if (skill) { e.preventDefault(); showSkillDetail(skill.dataset.skillId); return; }
+  const avatar = e.target.closest('[data-avatar-pid]');
+  if (avatar) { e.preventDefault(); showPlayerSkills(avatar.dataset.avatarPid); return; }
+  const equip = e.target.closest('[data-equip-name]');
+  if (equip) { e.preventDefault(); showCardDetail(equip.dataset.equipName, equip.dataset.equipSuit, equip.dataset.equipRank); return; }
+});
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
@@ -611,6 +967,7 @@ document.addEventListener('click', (e) => {
   if (act === 'choice') { try { return send({ value: JSON.parse(decodeURIComponent(el.dataset.choice)) }); } catch (_) { return; } }
   if (act === 'suit') return send({ suit: el.dataset.suit });
   if (act === 'skill') return send({ action: 'skill', skill: el.dataset.skill });
+  if (act === 'use-skill') return send({ action: 'skill', skill: el.dataset.skill });
   if (act === 'end') return send({ action: 'end' });
   if (act === 'swap') return send({ action: 'swap' });
   if (act === 'cancel') {
@@ -635,6 +992,19 @@ document.addEventListener('click', (e) => {
     S.pendingSel = [];
     return send({ cardIds: ids });
   }
+  if (act === 'guicai-top') { S.guicaiTopIndex = Number(el.dataset.index); render(); return; }
+  if (act === 'guicai-hand') { S.guicaiHandId = el.dataset.id; render(); return; }
+  if (act === 'guicai-replace') {
+    if (S.guicaiTopIndex == null || !S.guicaiHandId) return;
+    return send({ action: 'replace', topIndex: S.guicaiTopIndex, handCardId: S.guicaiHandId });
+  }
+  if (act === 'guicai-arrange') return send({ action: 'arrange' });
+  if (act === 'guicai-skip') return send({ action: 'skip' });
+  if (act === 'arrange-confirm') {
+    if (!S.arrange) return;
+    if (S.arrange.mode === 'guanxing') return send({ top: S.arrange.top.slice(), bottom: S.arrange.bottom.slice() });
+    return send({ order: (S.arrange.order || []).slice() });
+  }
   if (act === 'modal-option') { const o = S.modalOptions[Number(el.dataset.index)]; $('#modal').classList.add('hidden'); return chooseOption(o); }
   if (act === 'close-modal') { $('#modal').classList.add('hidden'); return; }
   if (act === 'select-general') { S.selectedGeneral = el.dataset.general; renderRoom(); return; }
@@ -654,11 +1024,52 @@ document.addEventListener('click', (e) => {
   }
   if (act === 'overlay-exit') { if (e.target === el) exitGame(); return; }
   if (act === 'exit') return exitGame();
+  if (act === 'close-skill-modal') { $('#skill-modal')?.classList.add('hidden'); return; }
   if (act === 'tab') { S.encTab = el.dataset.tab; renderEncyclopedia(); return; }
   if (act === 'filter') { S.encFilter = el.dataset.filter; renderEncyclopedia(); return; }
 });
 
 $('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) $('#modal').classList.add('hidden'); });
+
+// 观星 / 鬼才：拖动排序
+document.addEventListener('dragstart', (e) => {
+  const el = e.target.closest('[data-arrange-id]');
+  if (!el || !S.arrange) return;
+  S.dragId = el.dataset.arrangeId;
+  try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', S.dragId); } catch (_) {}
+  el.classList.add('dragging');
+});
+document.addEventListener('dragend', (e) => {
+  const el = e.target.closest('[data-arrange-id]');
+  if (el) el.classList.remove('dragging');
+  S.dragId = null;
+  document.querySelectorAll('.drag-over').forEach(x => x.classList.remove('drag-over'));
+});
+document.addEventListener('dragover', (e) => {
+  if (!S.arrange) return;
+  const list = e.target.closest('[data-arrange-list]');
+  if (!list) return;
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+  list.classList.add('drag-over');
+});
+document.addEventListener('dragleave', (e) => {
+  const list = e.target.closest('[data-arrange-list]');
+  if (list && (!e.relatedTarget || !list.contains(e.relatedTarget))) list.classList.remove('drag-over');
+});
+document.addEventListener('drop', (e) => {
+  if (!S.arrange) return;
+  const list = e.target.closest('[data-arrange-list]');
+  if (!list) return;
+  e.preventDefault();
+  const id = S.dragId || (e.dataTransfer ? e.dataTransfer.getData('text/plain') : null);
+  if (!id) return;
+  const target = e.target.closest('[data-arrange-id]');
+  moveArrangeCard(id, list.dataset.arrangeList, target ? target.dataset.arrangeId : null);
+  S.dragId = null;
+  document.querySelectorAll('.drag-over').forEach(x => x.classList.remove('drag-over'));
+  render();
+});
 
 // ---------- 图鉴 ----------
 async function renderEncyclopedia() {

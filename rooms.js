@@ -29,6 +29,7 @@ class Room {
     this.streams = new Map();
     this.game = null;
     this.draft = null;
+    this.gameOrder = null;
     this.winner = null;
     this.createdAt = Date.now();
     this.addPlayer(host);
@@ -117,6 +118,11 @@ class Room {
 
   getView(pid) {
     const me = this.players.get(pid);
+    const useGameOrder = !!this.gameOrder && this.phase !== 'lobby';
+    const ordered = useGameOrder ? this.gameOrder.map(id => this.players.get(id)).filter(Boolean) : this.seats;
+    const seatIndex = {};
+    ordered.forEach((p, i) => { if (p) seatIndex[p.id] = i; });
+    const mySeat = me ? (useGameOrder && seatIndex[me.id] != null ? seatIndex[me.id] : me.seat) : null;
     return {
       code: this.code,
       mode: this.mode,
@@ -124,8 +130,11 @@ class Room {
       phase: this.phase,
       host: this.host,
       you: pid,
-      seats: this.seats.map((p, i) => p ? {
+      youSeat: mySeat,
+      youIdentity: me ? me.identity : null,
+      seats: ordered.map((p, i) => p ? {
         seat: i, id: p.id, name: p.name, isBot: p.isBot, connected: p.connected,
+        identity: p.id === pid ? p.identity : (p.identity === 'lord' ? 'lord' : null),
       } : { seat: i, id: null, name: '空位', isBot: false, connected: false }),
       canStart: this.phase === 'lobby' && this.seats.every(Boolean) && this.host === pid,
       draft: this.draft ? this.draftView(pid) : null,
@@ -171,6 +180,8 @@ class Room {
     for (let i = 0; i < players.length; i++) players[i].identity = shuffled[i];
     const lord = players.find(p => p.identity === 'lord');
     const nonLords = players.filter(p => p !== lord);
+    // 实际座次：主公固定 1 号位，其余玩家随机
+    this.gameOrder = [lord, ...shuffle(nonLords.slice())].map(p => p.id);
     const lordPool = shuffle(LORD_GENERALS.map(g => g.id));
     const others = shuffle(GENERALS.filter(g => !g.lord).map(g => g.id)).slice(0, 3);
     const lordOptions = [...lordPool, ...others];
@@ -303,7 +314,9 @@ class Room {
     if (!all) { this.autoBotDraft(); return; }
     d.phase = 'done';
     const lord = this.players.get(d.lordId);
-    const seats = this.seats.filter(Boolean).map(p => {
+    const ordered = (this.gameOrder || []).map(id => this.players.get(id)).filter(Boolean);
+    const basePlayers = ordered.length === this.seats.filter(Boolean).length ? ordered : this.seats.filter(Boolean);
+    const seats = basePlayers.map(p => {
       const generalId = p.id === d.lordId ? d.lordPick : d.picks[p.id].chosen;
       return { id: p.id, name: p.name, isBot: p.isBot, identity: p.identity, generalId };
     });

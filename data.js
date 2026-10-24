@@ -115,7 +115,7 @@ const GENERALS = [
   { id: 'huangyueying', name: '黄月英', faction: 'shu', hp: 3, gender: 'female', skills: [
     { id: 'jizhi', name: '集智', type: 'trigger', desc: '每回合限三次，当你使用一张非转化的锦囊牌时，你可以摸一张牌；若摸到基本牌，你可以弃置之，令本回合【集智】次数+1、手牌上限+1。' },
     { id: 'qicai', name: '奇才', type: 'lock', desc: '锁定技，你使用牌无距离限制；若你的手牌数不小于当前体力值且未装备其他防具，你视为装备【八卦阵】且拥有【看破】。' },
-    { id: 'kanpo', name: '看破', type: 'lock', desc: '你可以将一张黑色牌当【无懈可击】使用。' },
+    { id: 'kanpo', name: '看破', type: 'lock', derived: true, acquire: '奇才', desc: '你可以将一张黑色牌当【无懈可击】使用。' },
   ]},
   { id: 'zhaoyun', name: '赵云', faction: 'shu', hp: 4, skills: [
     { id: 'longdan', name: '龙胆', type: 'lock', desc: '你可以将【杀】当【闪】、【闪】当【杀】使用或打出。以此法转化的【杀】被【闪】抵消时，你可以对一名角色造成1点伤害；以此法转化的【闪】抵消【杀】时，你可以令一名其他角色回复1点体力。' },
@@ -177,7 +177,7 @@ const GENERALS = [
   { id: 'lvmeng', name: '吕蒙', faction: 'wu', hp: 4, skills: [
     { id: 'keji', name: '克己', type: 'lock', desc: '锁定技，弃牌阶段，若你本回合未使用过颜色不同的牌，你摸一张牌且本回合手牌上限+4。' },
     { id: 'qinxue', name: '勤学', type: 'awaken', desc: '觉醒技，准备阶段，若你的手牌数不小于存活角色数，你减1点体力上限，摸两张牌并获得技能【博图】。' },
-    { id: 'botu', name: '博图', type: 'trigger', desc: '结束阶段，若你本回合使用过四种花色或三种类别的牌，你获得一个额外回合；此技能不能在额外回合的结束阶段发动。' },
+    { id: 'botu', name: '博图', type: 'trigger', derived: true, acquire: '勤学觉醒', desc: '结束阶段，若你本回合使用过四种花色或三种类别的牌，你获得一个额外回合；此技能不能在额外回合的结束阶段发动。' },
   ]},
   { id: 'huanggai', name: '黄盖', faction: 'wu', hp: 4, skills: [
     { id: 'kurou', name: '苦肉', type: 'active', desc: '出牌阶段限一次，你可以失去1点体力并摸两张牌；若如此做，本回合你可以多使用一张【杀】，你使用的红色【杀】无距离限制且不可被【闪】响应。' },
