@@ -269,7 +269,7 @@ const GENERALS = [
     { id: 'lianying', name: '连营', type: 'active', desc: '出牌阶段限一次，你可以将一张♦牌当火【杀】、一张♥牌当【火攻】使用；若对目标造成伤害，你可以对目标的上家或下家造成1点火焰伤害。' },
   ]},
   { id: 'sunshangxiang', name: '孙尚香', faction: 'wu', hp: 3, gender: 'female', skills: [
-    { id: 'jieyin', name: '结姻', type: 'active', desc: '出牌阶段限一次，你可以将一张牌交给一名男性角色，若为装备牌其可使用；然后若你们体力值不等，较小的一方回复1点体力，较大的一方摸两张牌。' },
+    { id: 'jieyin', name: '结姻', type: 'active', desc: '出牌阶段限一次，你可以将一张牌交给一名男性角色，若为装备牌其可使用；然后若你们体力值不等，较小的一方回复1点体力，较大的一方摸两张牌；若体力相等，双方各摸一张牌。' },
     { id: 'xiaoji', name: '枭姬', type: 'trigger', desc: '当你失去装备牌时，你可以摸一张牌；若此时是你的回合外，你额外摸两张牌。' },
   ]},
 
@@ -308,7 +308,7 @@ const GENERALS = [
   ]},
   { id: 'hejin', name: '何进', faction: 'qun', hp: 4, skills: [
     { id: 'mouzhu', name: '谋诛', type: 'active', desc: '出牌阶段限两次，你可以获得一名其他角色的一张手牌；若其手牌数小于你，你可以令其视为对你使用一张【决斗】。' },
-    { id: 'yanhuo', name: '延祸', type: 'lock', desc: '锁定技，你死亡时，所有其他角色弃置X张牌（X为你死亡前的手牌数）；伤害来源失去2点体力。' },
+    { id: 'yanhuo', name: '延祸', type: 'lock', desc: '锁定技，你死亡时，所有其他角色弃置X张牌（X为你死亡前的手牌数）；伤害来源失去1点体力。' },
   ]},
 ];
 
