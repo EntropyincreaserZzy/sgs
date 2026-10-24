@@ -1,9 +1,10 @@
-# 三国杀 · 军争（网页版）v1.0.0 测试版
+# 三国杀 · 军争（网页版）v1.1.0
 
-> 版本：**1.0.0** · 更新日志：[CHANGELOG.md](CHANGELOG.md) · 启动：`npm start` 或 `node server.js`
+> 版本：**1.1.0** · 更新日志：[CHANGELOG.md](CHANGELOG.md) · 启动：`npm start` 或 `node server.js`（Windows 可双击 `start.bat`）
 
-一个可本地联机的三国杀军争网页原型：五人 / 八人、房间码、随机匹配、机器人补位、
-主公选将、三选一、五秒换牌、军争牌堆、32 名武将、牌堆 / 武将图鉴。
+一个可联机的三国杀军争完整网页版：五人 / 八人、房间码、随机匹配、机器人补位、
+主公选将、三选一、五秒换牌、军争牌堆、32 名武将、牌堆 / 武将图鉴；
+现在带 **账号注册 / 登录**、跨设备会话、个人战绩，以及 Docker / Caddy 公网部署。
 
 ## 启动
 
@@ -12,7 +13,9 @@ cd sgs
 node server.js
 ```
 
-然后打开：<http://127.0.0.1:3000>
+然后打开：<http://127.0.0.1:3000>，注册一个账号即可创建 / 加入房间。
+
+Windows 也可以直接双击 `start.bat`：它会以局域网模式启动并自动打开浏览器。
 
 - 默认端口 3000，可用 `PORT=3001 node server.js` 改端口。
 - 默认监听 `127.0.0.1`，同一台机器可开多个浏览器标签/窗口联机。
@@ -27,19 +30,79 @@ node server.js
    ```powershell
    $env:HOST='0.0.0.0'; node server.js
    ```
-3. 如果 Windows 防火墙弹窗，选择“允许访问”（专用网络）；没有弹窗就用管理员 PowerShell 放行 TCP 3000：
+3. 如果 Windows 防火墙弹窗，选择“允许访问”；没有弹窗就用管理员 PowerShell 放行 TCP 3000：
    ```powershell
-   New-NetFirewallRule -DisplayName "Sanguosha 3000" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private
+   New-NetFirewallRule -DisplayName "Sanguosha 3000" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Any
    ```
-4. 手机浏览器打开 `http://<电脑局域网IP>:3000`。
+   先运行 `Get-NetConnectionProfile` 看当前 Wi-Fi 的 `NetworkCategory`：如果显示 `Public`（校园网 / 公司网常见），**不要用 `-Profile Private`**，否则规则不生效；用上面的 `-Profile Any` 或改成 `-Profile Public`。
+4. 手机 / 同学浏览器打开 `http://<电脑局域网IP>:3000`，进入后输入昵称，再输入**房主分享的 8 位房间码**加入；不要把房间码当网址输入。
+5. 房主的电脑必须保持开机、终端不要关、不要休眠；服务重启后旧房间码会失效，需要重新建房。
+
+### 打不开时按顺序自查
+
+- 房主本机打开 `http://127.0.0.1:3000`：打不开说明服务没在跑，先 `node server.js`。
+- 房主用 `http://<局域网IP>:3000` 打开：本机能开但同学不能开，基本是防火墙或 Wi-Fi 客户端隔离。
+- 同学的地址必须是 `http://10.180.81.130:3000` 这种局域网 IP，**不能是 `127.0.0.1`**；手机用流量或不同 Wi-Fi 时局域网 IP 不可达。
+- 校园网 / 酒店 Wi-Fi 常有 AP 隔离，同一 Wi-Fi 的设备也互访不了；用手机热点让两台设备连同一个热点，或用 Cloudflare Tunnel / ngrok 做公网隧道。
+- 页面能打开但加入失败：确认房间码没输错、房主没有重启服务；页面一直等待：确认房主终端没有报错、没有休眠。
 
 注意：
 - 手机和电脑必须在同一 Wi-Fi；公司 / 校园 / 酒店 Wi-Fi 可能开启 AP 隔离，设备之间不能互访。
 - 手机用流量或不同网络时，局域网 IP 不可达，需要公网部署或 Cloudflare Tunnel / ngrok 之类的隧道。
 - 当前没有账号体系，只靠房间码和令牌；不要直接把 3000 端口暴露到公网。
 
+## 账号与数据
+
+- 注册 / 登录后，昵称、战绩会绑定到账号；换电脑 / 手机登录同一账号即可继续。
+- 密码用 scrypt 加盐哈希保存；会话是 HttpOnly Cookie，30 天有效。
+- 数据在 `DATA_DIR/db.json`（默认 `sgs/data/db.json`）；`data/` 已加入 `.gitignore`。
+- 对局结束自动记录：模式、身份、武将、胜负；个人中心显示对局 / 胜场 / 胜率 / 最近 20 局。
+- 房间本身仍在内存里，服务重启会清空当前房间；账号和战绩不会丢。
+
+## 部署成公网网站
+
+### 方式一：Railway / Render（最省事，推荐先试）
+
+1. 把 `sgs/` 推到 GitHub；
+2. **Railway**：New Project → Deploy from GitHub → 选中仓库（会自动识别 Dockerfile）→ 添加 Volume 挂载到 `/data` → 环境变量 `DATA_DIR=/data`、`NODE_ENV=production` → Deploy；
+3. **Render**：New Blueprint → 选中仓库里的 `render.yaml`（已带 Docker + 1GB 磁盘 + `/data`）；磁盘需要付费实例；
+4. 平台会给出 `https://xxx.up.railway.app` / `https://xxx.onrender.com` 域名，直接就是可登录的公网网站。
+
+### 方式二：一台 VPS + Docker + Caddy（可绑自己的域名）
+
+```bash
+# 香港 / 新加坡的小 VPS，装好 Docker 后
+git clone <你的仓库> sgs && cd sgs
+DOMAIN=game.example.com docker compose up -d --build
+```
+
+- 把域名 A 记录指向 VPS；Caddy 自动申请 HTTPS；
+- `docker-compose.yml` 会把 `./data` 挂到容器 `/data`，账号数据持久化；
+- 只暴露 80 / 443，3000 不直接对公网；SSE 已配置不缓冲；
+- 更新：`git pull && docker compose up -d --build`。
+
+### 方式三：本机 + Cloudflare Tunnel（临时给同学玩）
+
+```powershell
+node server.js
+# 另开终端
+cloudflared tunnel --url http://localhost:3000
+```
+
+会得到一个 `https://xxx.trycloudflare.com`，同学在任何网络都能登录；缺点是电脑要一直开着、URL 是临时的。
+
+### 公网注意事项
+
+- 必须用 HTTPS（平台 / Caddy 已处理），否则登录 Cookie 的 Secure 行为会受限制；
+- `NODE_ENV=production` 时 Cookie 自动加 Secure；本地 HTTP 调试不要设这个变量；
+- 账号系统很轻量：没有邮箱找回、没有管理员后台；面向朋友局足够，公开运营前请自行加限流 / 备份 / 合规检查；
+- 定期备份 `data/db.json`。
+
 ## 已实现
 
+- **账号**：用户名 + 密码注册、登录、退出；HttpOnly Cookie 会话 30 天；跨设备登录同一账号；密码 scrypt 加盐哈希。
+- **个人中心**：对局 / 胜场 / 胜率、最近 20 局战绩、身份与武将；数据持久化在 `data/db.json`。
+- **公开部署**：Dockerfile、docker-compose + Caddy（自动 HTTPS、SSE 不缓冲）、Render Blueprint、Windows 一键 `start.bat`。
 - **大厅**：输入昵称；五人 / 八人军争；创建房间（8 位房间码）、房间码加入、随机匹配。
 - **房间**：房主可添加 / 移除机器人；人齐后房主开始。
 - **身份**：随机抽主公，其余身份与座位随机分配；主公体力上限 +1。
@@ -54,7 +117,7 @@ node server.js
 - **选牌操作**：出牌阶段先点一张可用的牌（选中的牌会亮起并浮动），再点目标玩家使用；目标不合法会弹出提示；响应牌仍然点一下就能出；左键再次点击已选中的牌可以取消选中。
 - **场上牌**：玩家使用的牌在结算完成前留在牌桌中央，牌下方标注「使用者 对 被使用者」，结算完成后才消失。
 - **装备区**：每个座位公开显示武器 / 防具 / +1 马 / -1 马四个装备槽，以及实时手牌数量（暗置）；右键装备查看牌面效果，右键其他玩家头像查看其技能。
-- **界面**：人物框整体放大；方片 / 红桃的红色调亮；战报中的玩家名替换为武将名；牌桌中央固定槽位，打出的牌与牌堆 / 弃牌堆并排，牌堆 / 弃牌堆不下移也不被遮挡，8 人局顶部座位不再被牌覆盖；顶部显示 v1.0.0。
+- **界面**：人物框整体放大；方片 / 红桃的红色调亮；战报中的玩家名替换为武将名；牌桌中央固定槽位，打出的牌与牌堆 / 弃牌堆并排，牌堆 / 弃牌堆不下移也不被遮挡，8 人局顶部座位不再被牌覆盖；顶部显示 v1.1.0。
 - **主公选将分区**：主公将和非主公将分两个区域显示，不再混在同一排。
 - **座次**：对局中每名武将下方标出实际座次，与选将时报的座次一致。
 - **思考时间**：每次行动 / 响应有 30 秒倒计时（右上角显示）；出牌或发动技能后重新计时，超时按默认处理。
@@ -91,13 +154,17 @@ sgs/
   engine.js          规则引擎：回合、判定、伤害、濒死、无懈、铁索、胜负
   skills.js          32 名武将的技能触发 / 主动技能
   rooms.js           房间、选将、身份、机器人、SSE 广播
-  server.js          HTTP + SSE 服务
+  accounts.js        账号、会话、战绩持久化
+  server.js          HTTP + SSE 服务 + 账号 API
   public/
     index.html
     style.css
     app.js           前端渲染与交互
     portraits/       32 名武将的立绘（从上传的武将卡裁切）
   screenshots/       界面截图
+  data/              账号数据（默认 db.json，已 gitignore）
+  Dockerfile / docker-compose.yml / Caddyfile / render.yaml
+  start.bat          Windows 一键局域网启动
   test.js            全机器人对局自测（引擎层）
   http-test.js       HTTP / SSE 流程测试（需服务运行）
 ```
@@ -111,12 +178,18 @@ node test.js 5
 
 # 需要先启动 server.js
 node http-test.js
+
+# 账号 / 登录：启动后浏览器注册；或直接调用
+# POST /api/auth/register  {username, password, displayName}
+# POST /api/auth/login     {username, password}
+# GET  /api/auth/me
+# POST /api/auth/logout
 ```
 
 ## 后续可以继续做
 
 - 把 160 张牌堆插画接入手牌（目前是 SVG 徽记水印；提供按牌名命名的图片目录即可自动接入）。
-- 补完丈八蛇矛两牌“打出”的响应流程、倾国 2/3 级、诈降“使用”等细节。
+- 补完丈八蛇矛两牌“打出”、诈降“使用”、章武 / 励众、天命观看看牌等细节。
 - 手机竖屏布局（当前对局界面偏桌面）。
 - 房间持久化、断线重连提示、聊天、观战。
-- 监听 `0.0.0.0` 做局域网联机（需要注意防火墙）。
+- 账号：邮箱找回 / 管理员后台 / 更严格限流（公开运营前）。

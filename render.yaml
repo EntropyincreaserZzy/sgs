@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: sanguosha
+    runtime: docker
+    plan: starter
+    healthCheckPath: /
+    disk:
+      name: sanguosha-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Asia/Shanghai

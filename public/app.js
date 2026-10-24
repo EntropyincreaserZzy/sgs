@@ -17,6 +17,7 @@ const S = {
   lastDrawSeq: 0, lastDrawRoom: null,
   tableCard: null, tableCardAt: 0, tableCardTimer: null, tableCardRoom: null,
   zhangba: null, zhangbaSel: [],
+  account: null, authView: 'auth', authTab: 'login', authError: '', authBusy: false,
 };
 
 function esc(s) {
@@ -41,6 +42,8 @@ function identName(id) { return IDENT[id] || ''; }
 // ---------- 初始化 ----------
 function init() {
   bindHome();
+  bindAuth();
+  loadAccount();
   const saved = sessionStorage.getItem('sgs_session');
   if (saved) {
     try { S.session = JSON.parse(saved); $('#input-name').value = S.session.name || ''; connect(); } catch (e) { }
@@ -55,7 +58,7 @@ function init() {
 
 function bindHome() {
   $('#input-name').value = localStorage.getItem('sgs_name') || '';
-  $('#input-name').addEventListener('input', e => localStorage.setItem('sgs_name', e.target.value));
+  $('#input-name').addEventListener('input', e => { if (!S.account) localStorage.setItem('sgs_name', e.target.value); });
   $$('.mode-btn').forEach(b => b.addEventListener('click', () => {
     S.mode = Number(b.dataset.mode);
     $$('.mode-btn').forEach(x => x.classList.toggle('active', x === b));
@@ -69,7 +72,17 @@ function bindHome() {
   $('#brand').addEventListener('click', () => goHome());
   $('#nav-home').addEventListener('click', () => goHome());
   $('#nav-encyclopedia').addEventListener('click', () => { showScreen('enc'); renderEncyclopedia(); });
+  $('#nav-account').addEventListener('click', () => { if (S.account) openProfile(); else openAuth('login'); });
 }
+
+function bindAuth() {
+  const modal = $('#auth-modal');
+  if (!modal) return;
+  modal.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && S.authView === 'auth') { e.preventDefault(); doAuth(); }
+  });
+}
+
 
 async function join(action) {
   const name = $('#input-name').value.trim();
@@ -91,6 +104,147 @@ async function join(action) {
     connect();
   } catch (e) { toast('网络错误'); }
   finally { btn.disabled = false; }
+}
+
+// ---------- 账号 ----------
+async function loadAccount() {
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (r.ok) { const j = await r.json(); S.account = j.user || null; }
+    else S.account = null;
+  } catch (e) { S.account = null; }
+  renderAccount();
+}
+
+function renderAccount() {
+  const btn = $('#nav-account');
+  if (btn) {
+    btn.textContent = S.account ? S.account.displayName : '登录 / 注册';
+    btn.classList.toggle('logged-in', !!S.account);
+    btn.title = S.account ? `已登录：@${S.account.username}` : '登录或注册账号';
+  }
+  const name = $('#input-name');
+  if (name) {
+    if (S.account) { name.value = S.account.displayName; name.readOnly = true; name.classList.add('locked'); }
+    else { name.readOnly = false; name.classList.remove('locked'); if (!name.value) name.value = localStorage.getItem('sgs_name') || ''; }
+  }
+  const hint = $('#home-account-hint');
+  if (hint) hint.innerHTML = S.account
+    ? `已登录：<b>${esc(S.account.displayName)}</b> · <button class="link-btn" data-act="open-profile">我的账号 / 战绩</button>`
+    : '登录后可跨设备使用同一账号并保存战绩：<button class="link-btn" data-act="open-auth" data-tab="login">登录</button> · <button class="link-btn" data-act="open-auth" data-tab="register">注册</button>';
+}
+
+function openAuth(tab) {
+  S.authView = 'auth';
+  S.authTab = tab === 'register' ? 'register' : 'login';
+  S.authError = '';
+  renderAuth();
+  $('#auth-modal')?.classList.remove('hidden');
+  const u = $('#auth-username');
+  if (u) setTimeout(() => u.focus(), 30);
+}
+
+function openProfile() {
+  if (!S.account) return openAuth('login');
+  S.authView = 'profile';
+  S.authError = '';
+  renderAuth();
+  $('#auth-modal')?.classList.remove('hidden');
+}
+
+function closeAuth() { $('#auth-modal')?.classList.add('hidden'); }
+
+function renderAuth() {
+  const root = $('#auth-content');
+  if (!root) return;
+  if (S.authView === 'profile' && S.account) { root.innerHTML = profileHtml(); return; }
+  const isReg = S.authTab === 'register';
+  root.innerHTML = `
+    <div class="auth-title">${isReg ? '注册账号' : '登录账号'}</div>
+    <div class="auth-sub">${isReg ? '注册后自动登录，可在任何设备继续游戏。' : '登录后可在任何设备继续游戏并保存战绩。'}</div>
+    <div class="auth-tabs">
+      <button class="auth-tab ${!isReg ? 'active' : ''}" data-act="auth-tab" data-tab="login">登录</button>
+      <button class="auth-tab ${isReg ? 'active' : ''}" data-act="auth-tab" data-tab="register">注册</button>
+    </div>
+    <div class="auth-form">
+      <label class="field-label">用户名</label>
+      <input id="auth-username" class="input" maxlength="20" autocomplete="username" placeholder="3-20 位中文 / 字母 / 数字 / 下划线">
+      <label class="field-label">昵称</label>
+      ${isReg ? '<input id="auth-display" class="input" maxlength="12" placeholder="游戏中显示的名字">' : '<div class="auth-note">使用注册时设置的昵称</div>'}
+      <label class="field-label">密码</label>
+      <input id="auth-password" class="input" type="password" maxlength="64" autocomplete="${isReg ? 'new-password' : 'current-password'}" placeholder="至少 6 位">
+      <div id="auth-error" class="auth-error"></div>
+      <button class="btn primary auth-submit" data-act="do-auth">${isReg ? '注册并登录' : '登录'}</button>
+    </div>
+    <div class="auth-switch">${isReg ? '已有账号？<button class="link-btn" data-act="auth-tab" data-tab="login">直接登录</button>' : '还没有账号？<button class="link-btn" data-act="auth-tab" data-tab="register">免费注册</button>'}</div>`;
+}
+
+function profileHtml() {
+  const a = S.account;
+  const stats = a.stats || { games: 0, wins: 0, winRate: 0 };
+  const history = (a.history || []).map(g => `<div class="history-row">
+    <span class="history-result ${g.result === 'win' ? 'win' : 'lose'}">${g.result === 'win' ? '胜' : '负'}</span>
+    <span class="history-mode">${g.mode === 5 ? '5人' : '8人'}</span>
+    <span class="history-ident">${esc(identName(g.identity))}</span>
+    <span class="history-general">${esc(g.generalName || '')}</span>
+    <span class="history-time">${new Date(g.at).toLocaleDateString('zh-CN')}</span>
+  </div>`).join('');
+  return `<div class="auth-title">我的账号</div>
+    <div class="profile-head"><span class="profile-name">${esc(a.displayName)}</span><span class="profile-username">@${esc(a.username)}</span></div>
+    <div class="profile-stats">
+      <div class="stat"><b>${stats.games}</b><span>对局</span></div>
+      <div class="stat"><b>${stats.wins}</b><span>胜场</span></div>
+      <div class="stat"><b>${stats.winRate}%</b><span>胜率</span></div>
+    </div>
+    <div class="profile-section-title">最近战绩</div>
+    <div class="profile-history">${history || '<div class="profile-empty">还没有战绩，创建房间来一局吧。</div>'}</div>
+    <div class="profile-actions">
+      <button class="btn ghost" data-act="logout">退出登录</button>
+      <button class="btn small" data-act="close-auth">关闭</button>
+    </div>`;
+}
+
+async function doAuth() {
+  if (S.authBusy) return;
+  const isReg = S.authTab === 'register';
+  const username = ($('#auth-username')?.value || '').trim();
+  const password = $('#auth-password')?.value || '';
+  const displayName = ($('#auth-display')?.value || '').trim();
+  const showErr = m => { const e = $('#auth-error'); if (e) e.textContent = m; };
+  if (!username || !password) return showErr('请输入用户名和密码');
+  if (isReg && !displayName) return showErr('请输入昵称');
+  S.authBusy = true;
+  const btn = $('[data-act="do-auth"]');
+  if (btn) { btn.disabled = true; btn.textContent = '请稍候…'; }
+  try {
+    const r = await fetch('/api/auth/' + (isReg ? 'register' : 'login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ username, password, displayName }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { showErr(j.error || '操作失败'); return; }
+    S.account = j.user;
+    S.authView = 'profile';
+    S.authTab = 'login';
+    S.authError = '';
+    renderAccount();
+    renderAuth();
+    toast(isReg ? '注册成功，已登录' : '登录成功');
+  } catch (e) { showErr('网络错误，请稍后再试'); }
+  finally { S.authBusy = false; }
+}
+
+async function logout() {
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { }
+  S.account = null;
+  S.authView = 'auth';
+  S.authTab = 'login';
+  S.authError = '';
+  renderAccount();
+  renderAuth();
+  toast('已退出登录');
 }
 
 function connect() {
@@ -1035,6 +1189,12 @@ document.addEventListener('click', (e) => {
   if (!el) return;
   const act = el.dataset.act;
   if (act === 'noop') return;
+  if (act === 'open-auth') return openAuth(el.dataset.tab || 'login');
+  if (act === 'open-profile') return openProfile();
+  if (act === 'close-auth') return closeAuth();
+  if (act === 'auth-tab') { S.authTab = el.dataset.tab === 'register' ? 'register' : 'login'; S.authError = ''; renderAuth(); return; }
+  if (act === 'do-auth') return doAuth();
+  if (act === 'logout') return logout();
   if (act === 'card') return onCard(el.dataset.cardId);
   if (act === 'pick-card') {
     const p = S.state && S.state.game && S.state.game.pending;

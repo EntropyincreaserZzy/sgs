@@ -24,6 +24,7 @@ class Game {
       const g = GENERAL_MAP[s.generalId];
       return {
         id: s.id, name: s.name, seat: i, isBot: s.isBot, connected: true,
+        accountId: s.accountId || null,
         identity: s.identity, general: g,
         hp: g.hp, maxHp: g.maxHp || g.hp,
         hand: [], equip: { weapon: null, armor: null, horsePlus: null, horseMinus: null },

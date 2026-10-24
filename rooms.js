@@ -39,7 +39,7 @@ class Room {
     if (this.seats.includes(null) === false) return { error: '房间已满' };
     if (this.players.has(p.id)) return { error: '已在房间中' };
     const seat = this.seats.indexOf(null);
-    const player = { id: p.id, name: p.name, isBot: false, token: p.token, seat, connected: true };
+    const player = { id: p.id, name: p.name, isBot: false, token: p.token, seat, connected: true, accountId: p.accountId || null };
     this.seats[seat] = player;
     this.players.set(p.id, player);
     return { seat };
@@ -318,7 +318,7 @@ class Room {
     const basePlayers = ordered.length === this.seats.filter(Boolean).length ? ordered : this.seats.filter(Boolean);
     const seats = basePlayers.map(p => {
       const generalId = p.id === d.lordId ? d.lordPick : d.picks[p.id].chosen;
-      return { id: p.id, name: p.name, isBot: p.isBot, identity: p.identity, generalId };
+      return { id: p.id, name: p.name, isBot: p.isBot, identity: p.identity, generalId, accountId: p.accountId };
     });
     this.phase = 'playing';
     this.game = new Game(this, seats, this.mode);
