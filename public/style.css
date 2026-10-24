@@ -717,3 +717,23 @@ main { flex: 1; position: relative; min-height: 0; overflow: hidden; }
   .my-skills-head span, .my-skill-type { display: none; }
   .my-skill-name { font-size: 12px; }
 }
+
+/* 1.1.1：非锁定技封印 */
+.my-skill.locked {
+  opacity: 0.62;
+  filter: grayscale(0.75);
+  border-color: rgba(180, 180, 180, 0.28) !important;
+  cursor: not-allowed;
+}
+.skill-locked {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #d8ccb0;
+  border: 1px solid rgba(216, 204, 176, 0.35);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.other-skill.locked { opacity: 0.65; }

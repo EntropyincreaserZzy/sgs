@@ -56,6 +56,12 @@ class Game {
     this.tableCard = null;
     this.drawSeq = 0;
     this.lastDraw = null;
+    // 人机视角：blind=只知道自己身份（主公公开）；full=全视角。
+    // 房间人机默认 blind + 有思考间隔；调试脚本可设 full / blind 且 botDelay=false。
+    this.botView = 'blind';
+    this.botDelay = true;
+    this._bel = new Map();
+    this._obsSeq = 0;
   }
 
   // ---------- 基础 ----------
@@ -114,11 +120,90 @@ class Game {
 
   isEnemy(a, b) {
     if (!a || !b || a === b) return false;
+    if (this.botView === 'full') return this.fullIsEnemy(a, b);
+    return this.blindIsEnemy(a, b);
+  }
+
+  fullIsEnemy(a, b) {
     if (a.identity === 'lord' || a.identity === 'loyal') {
       return b.identity === 'rebel' || b.identity === 'spy';
     }
     if (a.identity === 'rebel') return b.identity === 'lord' || b.identity === 'loyal';
     if (a.identity === 'spy') return b.identity === 'lord' || b.identity === 'loyal' || b.identity === 'rebel';
+    return false;
+  }
+
+  _score(a, b) {
+    let m = this._bel.get(a.id);
+    if (!m) {
+      m = new Map();
+      this._bel.set(a.id, m);
+    }
+    if (!m.has(b.id)) {
+      let v = 0;
+      if (b.identity === 'lord') {
+        if (a.identity === 'rebel') v = 100;
+        else if (a.identity === 'lord' || a.identity === 'loyal') v = -100;
+      }
+      m.set(b.id, v);
+    }
+    return m.get(b.id) || 0;
+  }
+
+  _bump(a, b, d) {
+    const m = this._bel.get(a.id) || new Map();
+    this._bel.set(a.id, m);
+    m.set(b.id, (m.get(b.id) || 0) + d);
+  }
+
+  observeActions() {
+    const lp = this.lastPlay;
+    if (!lp || !lp.seq || lp.seq <= this._obsSeq) return;
+    this._obsSeq = lp.seq;
+    const a = this.players.find(p => p.id === lp.playerId);
+    if (!a) return;
+    const kind = lp.as || (lp.card && lp.card.name);
+    const OFF = ['杀', '决斗', '火攻', '顺手牵羊', '过河拆桥', '借刀杀人', '南蛮入侵', '万箭齐发', '乐不思蜀', '兵粮寸断', '铁索连环'];
+    const HELP = ['桃', '桃园结义', '无中生有', '五谷丰登', '仁德', '遗计', '结姻', '淑慎', '青囊', '急救', '清俭'];
+    for (const tid of lp.targets || []) {
+      const b = this.players.find(p => p.id === tid);
+      if (!b) continue;
+      if (OFF.includes(kind)) { this._bump(a, b, 2); this._bump(b, a, 2); }
+      else if (HELP.includes(kind)) { this._bump(a, b, -1); this._bump(b, a, -1); }
+    }
+  }
+
+  blindIsEnemy(a, b) {
+    const lord = this.players.find(p => p.identity === 'lord');
+    if (!lord) return this.fullIsEnemy(a, b);
+    const alive = this.alive();
+    const sc = this._score(a, b);
+
+    if (a.identity === 'spy') {
+      // 内奸：永远不主动打主公；只剩主公和自己时无脑打主公
+      if (b.identity === 'lord') return alive.length <= 2;
+      if (alive.length <= 2) return false;
+      const m = this._bel.get(a.id) || new Map();
+      let loyal = 1; // 主公本人
+      let rebel = 0;
+      for (const q of alive) {
+        if (q === a || q === lord) continue;
+        const v = m.get(q.id) || 0;
+        if (v < 0) loyal++;
+        else if (v > 0) rebel++;
+      }
+      // 主忠人数 <= 反贼人数时打反贼，否则打忠臣
+      if (loyal <= rebel) return sc > 0;
+      return sc < 0;
+    }
+    if (a.identity === 'lord' || a.identity === 'loyal') {
+      if (b.identity === 'lord') return false;
+      return sc >= 1;
+    }
+    if (a.identity === 'rebel') {
+      if (b.identity === 'lord') return true;
+      return sc >= 1;
+    }
     return false;
   }
 
@@ -352,7 +437,8 @@ class Game {
   }
 
   async botAnswer(p, req) {
-    await delay(1800 + Math.random() * 400);
+    if (this.botDelay) await delay(1800 + Math.random() * 400);
+    this.observeActions();
     try {
       return await this.botDecide(p, req);
     } catch (e) {
@@ -401,7 +487,7 @@ class Game {
         const scored = valids.map(t => ({ t, s: (this.isEnemy(p, t) ? 100 : 0) + (t === p ? -50 : 0) + t.hp * 5 })).sort((a, b) => a.s - b.s);
         return { targetId: scored[0].t.id };
       }
-      const scored = valids.map(t => ({ t, s: (t.hp * 10) + t.hand.length + (this.isEnemy(p, t) ? -100 : 100) })).sort((a, b) => a.s - b.s);
+      const scored = valids.map(t => ({ t, s: this.botTargetScore(p, t) })).sort((a, b) => a.s - b.s);
       return { targetId: scored[0].t.id };
     }
     if (req.type === 'choice') {
@@ -422,8 +508,12 @@ class Game {
 
   botAction(p, req) {
     const opts = (req.options || []).filter(o => (o.cardId !== undefined || o.action) && o.mode !== 'zhangba');
-    const enemyOf = (id) => { const t = this.players.find(x => x.id === id); return t && this.isEnemy(p, t); };
-    const enemyTarget = (o) => (o.targets || []).find(enemyOf);
+    const enemyTarget = (o) => {
+      const cands = (o.targets || []).map(id => this.players.find(x => x.id === id)).filter(t => t && this.isEnemy(p, t));
+      if (!cands.length) return null;
+      cands.sort((a, b) => this.botTargetScore(p, a) - this.botTargetScore(p, b));
+      return cands[0].id;
+    };
     const tao = opts.find(o => o.as === '桃' && p.hp < p.maxHp);
     if (tao && p.hp <= 2) return { action: 'play', cardId: tao.cardId, as: '桃', targets: [] };
     const equip = opts.find(o => o.type === 'equip');
@@ -447,6 +537,21 @@ class Game {
       return { action: 'skill', skill: skills[Math.floor(Math.random() * skills.length)].id };
     }
     return { action: 'end' };
+  }
+
+  botTargetScore(p, t) {
+    let s = t.hp * 10 + t.hand.length;
+    if (this.isEnemy(p, t)) s -= 100;
+    // 卖血 / 反击型技能：不要乱打
+    const danger = { fankui: 55, ganglie: 45, yiji: 35, jianxiong: 30, guicai: 20, tishen: 20 };
+    for (const sk of t.skills || []) s += danger[sk] || 0;
+    // 内奸在反贼多时优先收割残血反贼拿三张牌
+    if (p.identity === 'spy' && this.isEnemy(p, t) && t.hp <= 2) s -= 45;
+    // 主忠方优先打“更像反贼”的目标（敌意分高），而不是优先打眼中的内奸
+    if ((p.identity === 'lord' || p.identity === 'loyal') && this.isEnemy(p, t)) s -= this._score(p, t) * 4;
+    // 反贼在打不到主公时优先收残血忠臣/内奸
+    if (p.identity === 'rebel' && this.isEnemy(p, t) && t.hp <= 2) s -= 30;
+    return s;
   }
 
   botCardScore(c) {
@@ -766,6 +871,10 @@ class Game {
     p.alive = false;
     p.identityRevealed = true;
     this.log(`【${p.name}】阵亡，身份：${IDENT_NAMES[p.identity]}`);
+    if (p.identity === 'rebel' && source && source.alive && source !== p) {
+      this.draw(source, 3);
+      this.log(`【击杀反贼】：${source.name} 摸三张牌`);
+    }
     await this.trigger('death', p, { source, handCount });
     // 弃置所有牌
     const all = this.allCardsOf(p);
@@ -1363,7 +1472,6 @@ class Game {
   async run() {
     let guard = 0;
     while (!this.winner) {
-      if (++guard > 300) { this.log('对局回合数异常，强制结束'); this.winner = this.winner || 'lord'; break; }
       if (!this.alive().length) { this.winner = this.winner || 'lord'; break; }
       const p = this.players[this.turnIndex];
       if (!p.alive) { this.turnIndex = this.nextAlive(this.turnIndex); await new Promise(r => setImmediate(r)); continue; }
@@ -1569,12 +1677,14 @@ class Game {
       const own = p.skills.includes(s.id);
       const conditionalKanpo = s.id === 'kanpo' && p.general.id === 'huangyueying';
       if (!own && !conditionalKanpo) continue;
+      const locked = !!p.flags.nonLockDisabled && s.type !== 'lock';
       out.push({
         id: s.id, name: s.name, type: s.type, desc: s.desc,
         special: !!s.derived,
         acquire: s.acquire || '',
         active: s.id === 'kanpo' ? this.qicaiActive(p) : true,
-        usable: activeNow.has(s.id),
+        locked,
+        usable: activeNow.has(s.id) && !locked,
       });
     }
     return out;
@@ -1592,6 +1702,7 @@ class Game {
         id: p.id, name: p.name, seat: p.seat, isBot: p.isBot, connected: p.connected,
         alive: p.alive, hp: p.hp, maxHp: p.maxHp, handCount: p.hand.length,
         flipped: !!p.flags.flipped,
+        nonLockDisabled: !!p.flags.nonLockDisabled,
         general: { id: p.general.id, name: p.general.name, faction: p.general.faction, hp: p.general.hp },
         identity: (p.identity === 'lord' || p.identityRevealed || p.id === pid) ? p.identity : null,
         equip: this.publicEquip(p),

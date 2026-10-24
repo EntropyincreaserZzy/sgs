@@ -435,14 +435,15 @@ function skillPanelHtml(g, you) {
   const items = list.map(s => {
     const available = s.active !== false;
     const usable = !!s.usable;
+    const locked = !!s.locked;
     const activeSkill = s.type === 'active';
     const act = usable ? `data-act="use-skill" data-skill="${s.id}"` : '';
-    return `<div class="my-skill ${activeSkill ? 'active-skill' : ''} ${usable ? 'usable' : ''} ${s.special ? 'special' : ''} ${available ? '' : 'inactive'}" data-skill-id="${s.id}" ${act} title="${usable ? '左键发动，右键查看详情' : '右键查看详情'}">
+    return `<div class="my-skill ${activeSkill ? 'active-skill' : ''} ${usable ? 'usable' : ''} ${s.special ? 'special' : ''} ${available ? '' : 'inactive'} ${locked ? 'locked' : ''}" data-skill-id="${s.id}" ${act} title="${locked ? '非锁定技已被封印，无法发动' : usable ? '左键发动，右键查看详情' : '右键查看详情'}">
       <span class="my-skill-name">${esc(s.name)}</span>
       <span class="my-skill-type">${skillTypeName(s.type)}</span>
-      ${usable ? '<span class="skill-ready">可发动</span>' : ''}
+      ${locked ? '<span class="skill-locked">🔒 封印</span>' : usable ? '<span class="skill-ready">可发动</span>' : ''}
       ${s.special ? `<span class="skill-special">${esc(s.acquire || '获得')}</span>` : ''}
-      ${available ? '' : '<span class="skill-cond">未满足</span>'}
+      ${locked ? '' : available ? '' : '<span class="skill-cond">未满足</span>'}
     </div>`;
   }).join('');
   return `<div class="my-skills"><div class="my-skills-head">我的技能 <span>右键查看详情</span></div>${items}</div>`;
@@ -482,7 +483,8 @@ async function showPlayerSkills(pid) {
   const skills = (gen && gen.skills) || [];
   const rows = skills.map(s => {
     const badge = s.derived ? `<span class="skill-special">${esc(s.acquire || '获得')}</span>` : '';
-    return `<div class="other-skill"><div class="other-skill-head"><span class="other-skill-name">${esc(s.name)}</span><span class="my-skill-type">${skillTypeName(s.type)}</span>${badge}</div><div class="skill-desc">${esc(s.desc)}</div></div>`;
+    const locked = p.nonLockDisabled && s.type !== 'lock';
+    return `<div class="other-skill ${locked ? 'locked' : ''}"><div class="other-skill-head"><span class="other-skill-name">${esc(s.name)}</span><span class="my-skill-type">${skillTypeName(s.type)}</span>${badge}${locked ? '<span class="skill-locked">🔒 已封印</span>' : ''}</div><div class="skill-desc">${esc(s.desc)}</div></div>`;
   }).join('');
   const modal = $('#skill-modal');
   if (!modal) return;

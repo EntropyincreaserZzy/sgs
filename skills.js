@@ -714,7 +714,7 @@ const TRIGGERS = {
         if (q === p) continue;
         g.discardCards(q, g.allCardsOf(q).slice(0, x));
       }
-      if (ctx.source) await g.loseHp(ctx.source, 2, p);
+      if (ctx.source) await g.loseHp(ctx.source, 1, p);
     },
   },
 };
@@ -1055,6 +1055,11 @@ const ACTIVE = {
         const higher = lower === p ? t : p;
         await g.heal(lower, 1);
         g.draw(higher, 2);
+      } else {
+        // 1.1.1：结姻双方体力相等时各摸一张
+        g.draw(p, 1);
+        g.draw(t, 1);
+        g.log(`【结姻】：${p.name} 与 ${t.name} 体力相等，各摸一张牌`);
       }
     },
   },
