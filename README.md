@@ -13,22 +13,6 @@
 - 阿里云：**http://47.117.135.24:3000**
 - 服务器更新：`cd /opt/sgs && git pull && systemctl restart sgs`，账号数据在 `/opt/sgs/data`。
 
-### 本机 / 局域网
-
-```bash
-cd sgs
-node server.js          # 打开 http://127.0.0.1:3000
-# Windows 也可以双击 start.bat
-```
-
-同 Wi-Fi 同学访问：
-
-```powershell
-$env:HOST='0.0.0.0'; node server.js
-```
-
-查 `ipconfig` 的 IPv4，让同学打开 `http://<局域网IP>:3000`；Windows 防火墙放行 3000（校园网常是 Public，规则用 `-Profile Any`）。校园网 / 酒店 Wi-Fi 可能有 AP 隔离，同 Wi-Fi 也互访不了，改用手机热点或公网地址。
-
 ### 公网部署
 
 - **阿里云（当前）**：Ubuntu + systemd，代码在 `/opt/sgs`，`systemctl restart sgs`；账号数据 `/opt/sgs/data`。
