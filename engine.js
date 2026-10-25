@@ -522,10 +522,15 @@ class Game {
     if (wuzhong) return { action: 'play', cardId: wuzhong.cardId, as: wuzhong.as, targets: [] };
     const wugu = opts.find(o => o.as === '五谷丰登');
     if (wugu && p.hand.length < 3) return { action: 'play', cardId: wugu.cardId, as: '五谷丰登', targets: [] };
-    const sha = opts.find(o => o.as === '杀' && enemyTarget(o));
+    const isHuatuo = p.general && p.general.id === 'huatuo';
+    const prefer = (list) => {
+      if (!isHuatuo || !list.length) return list[0];
+      return list.find(o => o.suit !== '♥' && o.suit !== '♦') || list[0];
+    };
+    const sha = prefer(opts.filter(o => o.as === '杀' && enemyTarget(o)));
     if (sha && Math.random() < 0.9) { const t = enemyTarget(sha); return { action: 'play', cardId: sha.cardId, as: sha.as, targets: [t] }; }
     for (const kind of ['借刀杀人', '决斗', '火攻', '顺手牵羊', '过河拆桥', '乐不思蜀', '兵粮寸断']) {
-      const o = opts.find(x => x.as === kind && enemyTarget(x));
+      const o = prefer(opts.filter(x => x.as === kind && enemyTarget(x)));
       if (o) { const t = enemyTarget(o); return { action: 'play', cardId: o.cardId, as: o.as, targets: [t] }; }
     }
     const aoe = opts.find(o => o.as === '南蛮入侵' || o.as === '万箭齐发');
@@ -698,10 +703,30 @@ class Game {
       if (!a) continue;
       try { if (a.canUse(this, p)) out.push({ id: sid, name: (p.general.skills.find(s => s.id === sid) || {}).name || sid, desc: (p.general.skills.find(s => s.id === sid) || {}).desc || '' }); } catch (e) {}
     }
+    if (p.equip.weapon && p.equip.weapon.name === '丈八蛇矛' && this.zhangbaCards(p).length >= 2) {
+      out.push({ id: 'zhangba', name: '丈八蛇矛', desc: '你可以将两张牌当【杀】使用或打出（不能包含丈八蛇矛本身）。' });
+    }
     return out;
   }
 
+  zhangbaCards(p) {
+    return [...p.hand, ...Object.values(p.equip).filter(Boolean)].filter(c => c !== p.equip.weapon);
+  }
+
+  async useZhangba(p) {
+    const cards = this.zhangbaCards(p);
+    if (cards.length < 2) return;
+    const cs = await this.askCardsFromAll(p, 2, '丈八蛇矛：选择两张牌当【杀】', { validCards: cards });
+    if (cs.length < 2) return;
+    const valid = this.validTargets(p, '杀', cs[0]);
+    if (!valid.length) return;
+    const t = await this.askTarget(p, valid, '丈八蛇矛：选择【杀】的目标');
+    if (!t) return;
+    await this.playCard(p, cs[0].id, [t.id], '杀', cs[1].id);
+  }
+
   async useActive(p, sid, act) {
+    if (sid === 'zhangba') { await this.useZhangba(p); return; }
     const a = ACTIVE[sid];
     if (!a || !this.hasSkill(p, sid) || !a.canUse(this, p)) return;
     this.log(`${p.name} 发动【${(p.general.skills.find(s => s.id === sid) || {}).name || sid}】`);
@@ -728,8 +753,25 @@ class Game {
       validCards: valid.map(c => this.publicCard(c)),
       optional: !!opts.optional, dyingId: opts.dying ? opts.dying.id : null,
       opponentId: opts.opponentId || null,
+      zhangba: need === '杀' && this.zhangbaCards(p).length >= 2,
     };
     const ans = await this.ask(p, req);
+    if (ans && ans.zhangba && need === '杀') {
+      const pool = this.zhangbaCards(p);
+      const pick = await this.askCardsFromAll(p, 2, '丈八蛇矛：选择两张牌当【杀】', { validCards: pool });
+      if (pick.length < 2) return null;
+      for (const c of pick) this.removeCardFrom(p, c);
+      for (const c of pick) this.toDiscard(c);
+      const vc = { id: 'zb_' + (++this.playSeq), name: '杀', kind: 'sha', type: 'basic', suit: '♠', rank: 'A', virtual: true };
+      this.lastPlay = {
+        seq: this.playSeq, playerId: p.id, playerName: p.general.name,
+        card: this.publicCard(vc), as: '杀', equip: false,
+        targets: opts.opponentId ? [opts.opponentId] : [],
+      };
+      this.log(`${p.name} 使用 ${pick.map(c => `【${c.name}】`).join('+')}（当【杀】）`);
+      await this.trigger('cardUsed', p, { card: vc, as: '杀' });
+      return vc;
+    }
     if (!ans || !ans.cardId) return null;
     const card = p.hand.find(c => c.id === ans.cardId);
     if (!card) return null;
@@ -775,6 +817,20 @@ class Game {
     });
     if (!ans || !ans.cardIds) return [];
     return ans.cardIds.map(id => p.hand.find(c => c.id === id)).filter(Boolean);
+  }
+
+  async askCardsFromAll(p, count, prompt, opts = {}) {
+    const eq = [p.equip.weapon, p.equip.armor, p.equip.horsePlus, p.equip.horseMinus].filter(Boolean);
+    const valid = opts.validCards || [...p.hand, ...eq];
+    if (valid.length < count) count = valid.length;
+    if (count <= 0) return [];
+    const ans = await this.ask(p, {
+      type: 'cards', prompt, count,
+      validCards: valid.map(c => this.publicCard(c)),
+      optional: !!opts.optional,
+    });
+    if (!ans || !ans.cardIds) return [];
+    return ans.cardIds.map(id => valid.find(c => c.id === id)).filter(Boolean);
   }
 
   async askSuit(p, prompt) {
@@ -906,7 +962,7 @@ class Game {
     // 鬼才：判定前观看牌堆顶 X 张，可先换一张手牌，再调整顺序
     const guicai = this.alive().find(q => q.skills.includes('guicai'));
     if (guicai) {
-      const x = Math.max(1, guicai.maxHp);
+      const x = Math.max(1, guicai.hp);
       const top = [];
       for (let i = 0; i < x; i++) { const c = this.topCard(); if (c) top.push(c); }
       if (top.length) {
@@ -963,7 +1019,8 @@ class Game {
 
   // ---------- 出牌 ----------
   async playCard(p, cardId, targets = [], as, extraCardId) {
-    const card = p.hand.find(c => c.id === cardId);
+    const pool = [...p.hand, ...Object.values(p.equip).filter(Boolean)];
+    const card = pool.find(c => c.id === cardId);
     if (!card) return false;
     as = as || card.name;
     const zhangba = as === '杀' && !!extraCardId && p.equip.weapon && p.equip.weapon.name === '丈八蛇矛';
@@ -980,12 +1037,13 @@ class Game {
     if ((as === '火杀' || as === '火攻') && p.skills.includes('lianying') && card.name !== as) p.used.lianying = 1;
     let usedCards = [card];
     if (extraCardId) {
-      const c2 = p.hand.find(c => c.id === extraCardId && c.id !== cardId);
+      const c2 = pool.find(c => c.id === extraCardId && c.id !== cardId);
       if (c2) usedCards.push(c2);
       else if (zhangba) return false;
     }
+    if (zhangba && usedCards.some(c => c === p.equip.weapon)) return false;
     const targetObjs = targets.map(id => this.players.find(t => t.id === id)).filter(t => t && t.alive);
-    for (const c of usedCards) this.removeFromHand(p, c);
+    for (const c of usedCards) this.removeCardFrom(p, c);
     this.log(`${p.name} 使用 ${usedCards.map(c => `【${c.name}】`).join('+')}${as !== card.name ? `（当【${as}】）` : ''}${targetObjs.length ? ' → ' + targetObjs.map(t => t.name).join('、') : ''}`);
     this.lastPlay = {
       seq: ++this.playSeq,
@@ -1321,11 +1379,26 @@ class Game {
           const j = await this.judge(user, '铁骑');
           const jc = j.card;
           const pay = t.hand.find(c => c.suit === jc.suit);
+          let gave = false;
           if (pay) {
             const give = await this.askChoice(t, [{ value: 'yes', label: `交给 ${user.name} 一张${jc.suit}牌` }, { value: 'no', label: '不交' }], `铁骑：是否交给 ${user.name} 一张${jc.suit}牌？`);
-            if (give === 'yes') { this.removeFromHand(t, pay); await this.gain(user, [pay], 'tieji'); }
-            else t.flags.undodgeable = true;
-          } else t.flags.undodgeable = true;
+            if (give === 'yes') { this.removeFromHand(t, pay); await this.gain(user, [pay], 'tieji'); gave = true; }
+          }
+          if (!gave) {
+            t.flags.undodgeable = true;
+            const eqs = [t.equip.weapon, t.equip.armor, t.equip.horsePlus, t.equip.horseMinus].filter(Boolean);
+            if (eqs.length) {
+              const yes = await this.askChoice(user, [{ value: 'yes', label: `弃置 ${t.name} 一张装备牌` }, { value: 'no', label: '不弃置' }], '铁骑：是否先弃置其一张装备牌？');
+              if (yes === 'yes') {
+                const pick = await this.askCardsFromAll(user, 1, `铁骑：选择弃置 ${t.name} 的一张装备牌`, { validCards: eqs });
+                if (pick.length) {
+                  this.removeCardFrom(t, pick[0]);
+                  this.toDiscard(pick[0]);
+                  this.log(`【铁骑】：${user.name} 先弃置 ${t.name} 的【${pick[0].name}】`);
+                }
+              }
+            }
+          }
         }
       }
       const need = user.skills.includes('wushuang') ? 2 : 1;
@@ -1685,6 +1758,13 @@ class Game {
         active: s.id === 'kanpo' ? this.qicaiActive(p) : true,
         locked,
         usable: activeNow.has(s.id) && !locked,
+      });
+    }
+    if (p.equip.weapon && p.equip.weapon.name === '丈八蛇矛' && this.zhangbaCards(p).length >= 2) {
+      const locked = !!p.flags.nonLockDisabled;
+      out.push({
+        id: 'zhangba', name: '丈八蛇矛', type: 'active', desc: '你可以将两张牌当【杀】使用或打出（不能包含丈八蛇矛本身）。',
+        special: false, acquire: '', active: true, locked, usable: activeNow.has('zhangba') && !locked,
       });
     }
     return out;

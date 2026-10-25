@@ -883,7 +883,7 @@ function promptHtml(g) {
   }
   if (p && p.type === 'card') {
     return `<div class="prompt-bar"><div class="prompt-text">${esc(p.prompt || ('请打出【' + (p.need || '') + '】'))}</div>
-      <div class="prompt-actions">${p.optional ? '<button class="btn ghost small" data-act="cancel">放弃</button>' : ''}</div></div>`;
+      <div class="prompt-actions">${p.zhangba ? '<button class="btn small" data-act="zhangba-response">丈八蛇矛</button>' : ''}${p.optional ? '<button class="btn ghost small" data-act="cancel">放弃</button>' : ''}</div></div>`;
   }
   if (p && p.type === 'target') {
     return `<div class="prompt-bar"><div class="prompt-text">${esc(p.prompt || '选择目标')}</div>
@@ -1214,6 +1214,7 @@ document.addEventListener('click', (e) => {
   if (act === 'skill') return send({ action: 'skill', skill: el.dataset.skill });
   if (act === 'use-skill') return send({ action: 'skill', skill: el.dataset.skill });
   if (act === 'end') return send({ action: 'end' });
+  if (act === 'zhangba-response') return send({ zhangba: true });
   if (act === 'zhangba') {
     const p = S.state && S.state.game && S.state.game.pending;
     const o = (p && p.options || []).find(x => x.mode === 'zhangba');

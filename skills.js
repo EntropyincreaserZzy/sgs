@@ -469,7 +469,7 @@ const TRIGGERS = {
       if (t) await g.loseHp(t, 1, p);
     },
   },
-  fanjian: { turnStart: (g, p) => { p.marks.fanjianTargets = []; } },
+  fanjian: { turnStart: (g, p) => { p.marks.fanjianTargets = []; p.marks.fanjianSuits = []; } },
   guose: {},
   liuli: {
     targeted: async (g, p, ctx) => {
@@ -820,11 +820,17 @@ const ACTIVE = {
     },
   },
   fanjian: {
-    canUse: (g, p) => p.hand.length > 0 && g.alive().some(q => q !== p && !(p.marks.fanjianTargets || []).includes(q.id)),
+    canUse: (g, p) => {
+      const suits = p.marks.fanjianSuits || [];
+      return p.hand.some(c => !suits.includes(c.suit)) && g.alive().some(q => q !== p && !(p.marks.fanjianTargets || []).includes(q.id));
+    },
     use: async (g, p) => {
-      const cs = await g.askCards(p, 1, '反间：扣置一张手牌');
+      const suits = p.marks.fanjianSuits || [];
+      const avail = p.hand.filter(c => !suits.includes(c.suit));
+      const cs = await g.askCards(p, 1, '反间：扣置一张本回合未扣置花色的手牌', { validCards: avail });
       if (!cs.length) return;
       const c = cs[0]; g.removeFromHand(p, c);
+      p.marks.fanjianSuits = suits.concat(c.suit);
       const valid = g.alive().filter(q => q !== p && !(p.marks.fanjianTargets || []).includes(q.id));
       const t = await g.askTarget(p, valid, '反间：选择一名角色');
       if (!t) { await g.gain(p, [c]); return; }
@@ -866,11 +872,12 @@ const ACTIVE = {
     },
   },
   lijian: {
-    canUse: (g, p) => !p.used.lijian && p.hand.length > 0,
+    canUse: (g, p) => !p.used.lijian && g.allCardsOf(p).length > 0,
     use: async (g, p) => {
-      const cs = await g.askCards(p, 1, '离间：弃置一张手牌');
+      const cs = await g.askCardsFromAll(p, 1, '离间：弃置一张牌');
       if (!cs.length) return;
-      g.discardCards(p, cs);
+      g.removeCardFrom(p, cs[0]);
+      g.toDiscard(cs[0]);
       const males = g.alive().filter(q => q !== p && q.general.gender !== 'female');
       const a = await g.askTarget(p, males, '离间：选择第一名男性角色');
       if (!a) return;

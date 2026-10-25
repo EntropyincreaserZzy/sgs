@@ -36,7 +36,7 @@ const CARD_DEFS = {
   '青釭剑': { type: 'equip', subtype: 'weapon', range: 2, desc: '你的【杀】无视防具。' },
   '雌雄双股剑': { type: 'equip', subtype: 'weapon', range: 2, desc: '你的【杀】指定异性目标时，你可以摸一张牌。' },
   '青龙偃月刀': { type: 'equip', subtype: 'weapon', range: 3, desc: '你的【杀】被【闪】抵消后，你可以对同一目标再使用一张【杀】。' },
-  '丈八蛇矛': { type: 'equip', subtype: 'weapon', range: 3, desc: '你可以将两张手牌当【杀】使用或打出。' },
+  '丈八蛇矛': { type: 'equip', subtype: 'weapon', range: 3, desc: '你可以将两张牌当【杀】使用或打出（不能包含丈八蛇矛本身）。' },
   '贯石斧': { type: 'equip', subtype: 'weapon', range: 3, desc: '你的【杀】被【闪】抵消后，你可以弃两张牌令此【杀】依然造成伤害。' },
   '方天画戟': { type: 'equip', subtype: 'weapon', range: 4, desc: '你使用最后一张手牌【杀】时，可以额外指定至多两个目标。' },
   '麒麟弓': { type: 'equip', subtype: 'weapon', range: 5, desc: '你的【杀】造成伤害时，可以弃置目标的一匹坐骑。' },
@@ -196,7 +196,7 @@ const GENERALS = [
   ]},
   { id: 'machao', name: '马超', faction: 'shu', hp: 4, skills: [
     { id: 'mashu', name: '马术', type: 'lock', desc: '锁定技，你计算与其他角色的距离-1。' },
-    { id: 'tieji', name: '铁骑', type: 'trigger', desc: '当你使用【杀】指定目标时，你可以令其本回合非锁定技失效，然后判定；除非其交给你一张与判定牌花色相同的牌，否则此【杀】不可被【闪】响应，且回合结束时你收回此【杀】。' },
+    { id: 'tieji', name: '铁骑', type: 'trigger', desc: '当你使用【杀】指定目标时，你可以令其本回合非锁定技失效，然后判定；若其不交给你一张与判定牌花色相同的牌，你可以先弃置其一张装备牌，然后此【杀】不可被【闪】响应，且回合结束时你收回此【杀】。' },
   ]},
   { id: 'ganfuren', name: '甘夫人', faction: 'shu', hp: 3, gender: 'female', skills: [
     { id: 'shushen', name: '淑慎', type: 'trigger', desc: '准备阶段，你可以弃置任意张手牌；若弃置数不小于当前体力值，你回复1点体力，否则你摸等量的牌。' },
@@ -211,7 +211,7 @@ const GENERALS = [
   ]},
   { id: 'simayi', name: '司马懿', faction: 'wei', hp: 3, skills: [
     { id: 'fankui', name: '反馈', type: 'trigger', desc: '当你受到1点伤害后，你可以获得伤害来源的一张牌，然后判定；伤害来源本回合不能使用或打出与判定牌花色相同的手牌。' },
-    { id: 'guicai', name: '鬼才', type: 'trigger', desc: '任意角色判定前，你可以观看牌堆顶X张牌（X为你的体力上限），然后用一张手牌替换其中一张，其余以任意顺序置于牌堆顶。' },
+    { id: 'guicai', name: '鬼才', type: 'trigger', desc: '任意角色判定前，你可以观看牌堆顶X张牌（X为你的当前体力），然后用一张手牌替换其中一张，其余以任意顺序置于牌堆顶。' },
   ]},
   { id: 'xiahoudun', name: '夏侯惇', faction: 'wei', hp: 4, skills: [
     { id: 'ganglie', name: '刚烈', type: 'trigger', desc: '当你受到1点伤害后，你可以令伤害来源或一名距离伤害来源不大于1的角色判定；红色则你对其造成1点伤害，黑色则弃置其一张牌。' },
@@ -258,7 +258,7 @@ const GENERALS = [
   ]},
   { id: 'zhouyu', name: '周瑜', faction: 'wu', hp: 3, skills: [
     { id: 'yingzi', name: '英姿', type: 'lock', desc: '锁定技，摸牌阶段你多摸X张牌（X为【间】数且至少为1），手牌上限等于体力上限。出牌阶段开始时，若【间】不少于3，弃置全部【间】并令攻击范围内一名角色失去1点体力。' },
-    { id: 'fanjian', name: '反间', type: 'active', desc: '出牌阶段，你可以将一张手牌扣置为【间】，令一名其他角色选择猜测花色或失去1点体力；猜对或失去体力则其获得此牌且本回合不能再对其发动；猜错则你保留【间】并对其造成1点伤害。' },
+    { id: 'fanjian', name: '反间', type: 'active', desc: '出牌阶段，你可以将一张本回合未扣置过花色的手牌扣置为【间】，令一名其他角色选择猜测花色或失去1点体力；猜对或失去体力则其获得此牌且本回合不能再对其发动；猜错则你保留【间】并对其造成1点伤害。' },
   ]},
   { id: 'daqiao', name: '大乔', faction: 'wu', hp: 3, gender: 'female', skills: [
     { id: 'guose', name: '国色', type: 'active', desc: '出牌阶段各限一次，你可以将一张♦牌当【乐不思蜀】置于一名其他角色判定区，或弃置场上一张【乐不思蜀】并摸一张牌。' },
@@ -285,7 +285,7 @@ const GENERALS = [
     { id: 'liyu', name: '利驭', type: 'trigger', desc: '当你使用【杀】对一名角色造成伤害时，该角色可以交给你一张装备牌；若如此做，你视为对其指定的一名其他角色使用一张【决斗】。' },
   ]},
   { id: 'diaochan', name: '貂蝉', faction: 'qun', hp: 3, gender: 'female', skills: [
-    { id: 'lijian', name: '离间', type: 'active', desc: '出牌阶段限一次，你可以弃置一张手牌并选择两名男性角色，视为其中一名对另一名使用一张【决斗】。' },
+    { id: 'lijian', name: '离间', type: 'active', desc: '出牌阶段限一次，你可以弃置一张牌并选择两名男性角色，视为其中一名对另一名使用一张【决斗】。' },
     { id: 'lihun', name: '离魂', type: 'limited', desc: '限定技，出牌阶段，你可以翻面并获得一名其他角色的全部手牌；出牌阶段结束时依次交还X张牌（X为其当前体力值）。' },
     { id: 'biyue', name: '闭月', type: 'trigger', desc: '结束阶段，你可以摸一张牌。' },
   ]},

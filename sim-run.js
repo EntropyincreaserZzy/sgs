@@ -15,7 +15,7 @@ for (const mode of [5, 8]) {
 
 function run(mode) {
   return new Promise(resolve => {
-    execFile(process.execPath, [path.join(__dirname, 'sim-one.js'), String(mode)], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    execFile(process.execPath, [path.join(__dirname, 'sim-one.js'), String(mode)], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve(null);
       try { resolve(JSON.parse(String(stdout).trim().split('\n').filter(Boolean).pop())); }
       catch (e) { resolve(null); }

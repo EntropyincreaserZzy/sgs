@@ -92,7 +92,7 @@ async function runLimited(g, maxTurns) {
   for (const p of g.players) await g.trigger('gameStart', p, {});
   for (const p of g.players) g.draw(p, 4);
   g.phase = 'start';
-  await runLimited(g, 30);
+  await runLimited(g, 60);
   console.log(JSON.stringify({ winner: g.winner, players: g.players.map(p => ({ identity: p.identity, general: p.general.name })) }));
   process.exit(0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });
