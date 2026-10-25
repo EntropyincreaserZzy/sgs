@@ -1,6 +1,19 @@
 # 更新日志
 
-本项目是三国杀·军争的网页版，当前为 **1.1.4**；牌名、武将和部分技能沿用你自己的 32 将 / 军争卡表，规则细节以 `data.js` 里的描述为准。
+本项目是三国杀·军争的网页版，当前为 **1.1.5**；牌名、武将和部分技能沿用你自己的 32 将 / 军争卡表，规则细节以 `data.js` 里的描述为准。
+
+## [1.1.5] - 2026-10-25
+
+### 安全加固
+
+- 安全响应头：CSP、X-Frame-Options、nosniff、Referrer-Policy、Permissions-Policy；
+- 全站 API 限流（300 次/分/IP），登录 / 注册单独 10 次/分/IP；
+- SSE 每 IP 最多 5 条并发连接；
+- Session Cookie 改为 `SameSite=Strict`，HTTPS 下自动 `Secure`；
+- 请求体上限、请求头数量、请求超时限制；
+- 静态文件路径穿越修复、畸形 URL 不再导致进程异常；
+- 支持 `TRUST_PROXY=1` 在反向代理后读取真实 IP；
+- 新增 `SECURITY.md`：低权限运行、systemd 沙箱、Caddy HTTPS、防火墙、SSH、fail2ban、备份、防篡改与应急流程。
 
 ## [1.1.4] - 2026-10-25
 

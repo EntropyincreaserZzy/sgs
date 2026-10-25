@@ -24,16 +24,40 @@ const MIME = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; media-src 'self' https://music.163.com https://*.music.163.com https://*.music.126.net; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+};
+function secHeaders(res) {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+}
+
 function json(res, code, obj, headers = {}) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', ...headers });
+  secHeaders(res);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...headers,
+  });
   res.end(JSON.stringify(obj));
 }
 
 function readBody(req) {
   return new Promise(resolve => {
     let s = '';
-    req.on('data', d => { s += d; if (s.length > 1e6) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(s || '{}')); } catch (e) { resolve({}); } });
+    let tooLarge = false;
+    req.on('data', d => {
+      if (tooLarge) return;
+      s += d;
+      if (s.length > 1e6) { tooLarge = true; s = ''; }
+    });
+    req.on('end', () => {
+      if (tooLarge) return resolve({});
+      try { resolve(JSON.parse(s || '{}')); } catch (e) { resolve({}); }
+    });
   });
 }
 
@@ -42,9 +66,19 @@ function parseCookies(header) {
   for (const part of String(header || '').split(';')) {
     const i = part.indexOf('=');
     if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    const key = part.slice(0, i).trim();
+    const raw = part.slice(i + 1).trim();
+    try { out[key] = decodeURIComponent(raw); } catch { out[key] = raw; }
   }
   return out;
+}
+
+function clientIp(req) {
+  if (process.env.TRUST_PROXY === '1') {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (fwd) return fwd;
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 function isSecure(req) {
@@ -54,11 +88,11 @@ function isSecure(req) {
 
 function sessionCookie(req, token) {
   const maxAge = Math.floor(SESSION_MS / 1000);
-  return `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${isSecure(req) ? '; Secure' : ''}`;
+  return `sid=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isSecure(req) ? '; Secure' : ''}`;
 }
 
 function clearSessionCookie(req) {
-  return `sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${isSecure(req) ? '; Secure' : ''}`;
+  return `sid=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${isSecure(req) ? '; Secure' : ''}`;
 }
 
 function accountFromReq(req) {
@@ -66,16 +100,18 @@ function accountFromReq(req) {
   return token ? accounts.userByToken(token) : null;
 }
 
-const authHits = new Map();
-function authRateOk(req) {
-  const ip = (String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
+const rateHits = new Map();
+const sseByIp = new Map();
+function rateOk(req, limit, windowMs = 60000) {
+  const ip = clientIp(req);
   const now = Date.now();
-  const arr = (authHits.get(ip) || []).filter(t => now - t < 60000);
-  if (arr.length >= 10) return false;
+  const arr = (rateHits.get(ip) || []).filter(t => now - t < windowMs);
+  if (arr.length >= limit) { rateHits.set(ip, arr); return false; }
   arr.push(now);
-  authHits.set(ip, arr);
+  rateHits.set(ip, arr);
   return true;
 }
+function authRateOk(req) { return rateOk(req, 10); }
 
 function newPlayer(name, accountId) {
   return {
@@ -89,6 +125,10 @@ function newPlayer(name, accountId) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const p = url.pathname;
+
+  if (p.startsWith('/api/') && !rateOk(req, 300)) {
+    return json(res, 429, { error: '请求太频繁，请稍后再试' });
+  }
 
   if (p === '/api/data' && req.method === 'GET') {
     return json(res, 200, { generals: GENERALS, cards: CARD_DEFS, deck: DECK_COUNTS });
@@ -161,17 +201,25 @@ const server = http.createServer(async (req, res) => {
     if (!room) return json(res, 404, { error: '房间不存在' });
     const player = room.players.get(pid);
     if (!player || player.token !== token) return json(res, 403, { error: '身份校验失败' });
+    const ip = clientIp(req);
+    const n = sseByIp.get(ip) || 0;
+    if (n >= 5) return json(res, 429, { error: '连接数过多' });
+    sseByIp.set(ip, n + 1);
+    secHeaders(res);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
       'X-Accel-Buffering': 'no',
     });
     res.write(': connected\n\n');
     room.attachStream(pid, res);
     const timer = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
-    req.on('close', () => { clearInterval(timer); room.detachStream(pid); });
+    req.on('close', () => {
+      clearInterval(timer);
+      room.detachStream(pid);
+      sseByIp.set(ip, Math.max(0, (sseByIp.get(ip) || 1) - 1));
+    });
     return;
   }
 
@@ -187,9 +235,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 静态文件
-  let file = p === '/' ? '/index.html' : decodeURIComponent(p);
+  let file;
+  try { file = p === '/' ? '/index.html' : decodeURIComponent(p); }
+  catch { return json(res, 400, { error: 'bad request' }); }
   const full = path.join(PUBLIC, file);
-  if (!full.startsWith(PUBLIC)) return json(res, 403, { error: 'forbidden' });
+  const rel = path.relative(PUBLIC, full);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return json(res, 403, { error: 'forbidden' });
   fs.stat(full, (err, st) => {
     if (err || !st.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -197,6 +248,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const ext = path.extname(full).toLowerCase();
+    secHeaders(res);
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     fs.createReadStream(full).pipe(res);
   });
@@ -227,6 +279,11 @@ setInterval(() => {
     }
   }
 }, 3000).unref();
+
+server.headersTimeout = 10000;
+server.requestTimeout = 30000;
+server.keepAliveTimeout = 5000;
+server.maxHeadersCount = 100;
 
 server.listen(PORT, HOST, () => {
   console.log(`三国杀·军争 运行于 http://${HOST === '0.0.0.0' ? '本机局域网IP' : HOST}:${PORT}`);
