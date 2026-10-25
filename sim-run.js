@@ -25,7 +25,7 @@ function run(mode) {
 
 (async () => {
   for (const mode of [5, 8]) {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 150; i++) {
       const r = await run(mode);
       if (!r) {
         if (!stats._timeouts) stats._timeouts = 0; stats._timeouts++;
@@ -45,7 +45,7 @@ function run(mode) {
         gs.games++;
         if (winners.has(p.identity)) gs.wins++;
       }
-      if ((i + 1) % 10 === 0) console.log(`mode ${mode} done ${i + 1}/100`);
+      if ((i + 1) % 10 === 0) console.log(`mode ${mode} done ${i + 1}/150`);
     }
   }
   console.log('RESULT ' + JSON.stringify(stats));

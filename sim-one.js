@@ -2,6 +2,7 @@
 // 单局：行为推理 bot，只知道自己身份，主公公开。
 const { Game } = require('./engine');
 const { GENERALS } = require('./data');
+const { BOT_DEFS } = require('./rooms');
 
 const IDENTS = {
   5: ['lord', 'loyal', 'rebel', 'rebel', 'spy'],
@@ -46,9 +47,15 @@ Game.prototype.botAction = function (p, req) {
 
 function makeGame(mode) {
   const idents = IDENTS[mode].slice();
+  const botPool = BOT_DEFS.slice();
+  for (let i = botPool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [botPool[i], botPool[j]] = [botPool[j], botPool[i]];
+  }
   const seats = idents.map((identity, i) => {
     const g = GENERALS[Math.floor(Math.random() * GENERALS.length)];
-    return { id: 'p' + i, name: 'P' + i, isBot: true, identity, generalId: g.id };
+    const b = botPool[i];
+    return { id: 'p' + i, name: b.name, isBot: true, identity, generalId: g.id, botId: b.id, botPersona: b.persona };
   });
   const room = { broadcast() { }, onGameOver() { } };
   const g = new Game(room, seats, mode);
@@ -92,7 +99,7 @@ async function runLimited(g, maxTurns) {
   for (const p of g.players) await g.trigger('gameStart', p, {});
   for (const p of g.players) g.draw(p, 4);
   g.phase = 'start';
-  await runLimited(g, 60);
+  await runLimited(g, mode === 8 ? 70 : 60);
   console.log(JSON.stringify({ winner: g.winner, players: g.players.map(p => ({ identity: p.identity, general: p.general.name })) }));
   process.exit(0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

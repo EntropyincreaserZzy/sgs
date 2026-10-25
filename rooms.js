@@ -14,7 +14,20 @@ function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
-const BOT_NAMES = ['电脑·卧龙', '电脑·凤雏', '电脑·仲达', '电脑·公瑾', '电脑·孟德', '电脑·玄德', '电脑·云长', '电脑·翼德', '电脑·子龙', '电脑·伯符'];
+const BOT_DEFS = [
+  { id: 'wolong', name: '电脑·卧龙', persona: 'cautious' },
+  { id: 'fengchu', name: '电脑·凤雏', persona: 'cautious' },
+  { id: 'gongjin', name: '电脑·公瑾', persona: 'cautious' },
+  { id: 'yunchang', name: '电脑·云长', persona: 'aggressive' },
+  { id: 'yide', name: '电脑·翼德', persona: 'aggressive' },
+  { id: 'fengxian', name: '电脑·奉先', persona: 'aggressive' },
+  { id: 'xuande', name: '电脑·玄德', persona: 'defensive' },
+  { id: 'zhongmou', name: '电脑·仲谋', persona: 'defensive' },
+  { id: 'xianhou', name: '电脑·献帝', persona: 'defensive' },
+  { id: 'mengde', name: '电脑·孟德', persona: 'hunter' },
+  { id: 'zhongda', name: '电脑·仲达', persona: 'hunter' },
+  { id: 'wenhe', name: '电脑·文和', persona: 'hunter' },
+];
 
 class Room {
   constructor(code, mode, host, manager) {
@@ -49,9 +62,12 @@ class Room {
     if (this.phase !== 'lobby') return { error: '游戏已开始' };
     const seat = this.seats.indexOf(null);
     if (seat < 0) return { error: '房间已满' };
+    const used = new Set([...this.players.values()].map(p => p.botId).filter(Boolean));
+    const pool = BOT_DEFS.filter(b => !used.has(b.id));
+    if (!pool.length) return { error: '没有可用的机器人' };
+    const def = pool[crypto.randomInt(pool.length)];
     const id = 'bot_' + crypto.randomBytes(4).toString('hex');
-    const name = BOT_NAMES[this.players.size % BOT_NAMES.length] + (this.players.size > 9 ? this.players.size : '');
-    const player = { id, name, isBot: true, token: 'bot', seat, connected: true };
+    const player = { id, name: def.name, isBot: true, token: 'bot', seat, connected: true, botId: def.id, botPersona: def.persona };
     this.seats[seat] = player;
     this.players.set(id, player);
     this.broadcast();
@@ -318,7 +334,7 @@ class Room {
     const basePlayers = ordered.length === this.seats.filter(Boolean).length ? ordered : this.seats.filter(Boolean);
     const seats = basePlayers.map(p => {
       const generalId = p.id === d.lordId ? d.lordPick : d.picks[p.id].chosen;
-      return { id: p.id, name: p.name, isBot: p.isBot, identity: p.identity, generalId, accountId: p.accountId };
+      return { id: p.id, name: p.name, isBot: p.isBot, identity: p.identity, generalId, accountId: p.accountId, botId: p.botId, botPersona: p.botPersona };
     });
     this.phase = 'playing';
     this.game = new Game(this, seats, this.mode);
@@ -361,4 +377,4 @@ class RoomManager {
   }
 }
 
-module.exports = { Room, RoomManager, IDENT_NAMES };
+module.exports = { Room, RoomManager, IDENT_NAMES, BOT_DEFS };

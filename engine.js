@@ -25,6 +25,7 @@ class Game {
       return {
         id: s.id, name: s.name, seat: i, isBot: s.isBot, connected: true,
         accountId: s.accountId || null,
+        botId: s.botId || null, botPersona: s.botPersona || null,
         identity: s.identity, general: g,
         hp: g.hp, maxHp: g.maxHp || g.hp,
         hand: [], equip: { weapon: null, armor: null, horsePlus: null, horseMinus: null },
@@ -436,8 +437,13 @@ class Game {
     return true;
   }
 
+  botPersona(p) { return (p && p.botPersona) || 'balanced'; }
+
   async botAnswer(p, req) {
-    if (this.botDelay) await delay(1800 + Math.random() * 400);
+    if (this.botDelay) {
+      const cautious = this.botPersona(p) === 'cautious';
+      await delay((cautious ? 2600 : 1800) + Math.random() * 400);
+    }
     this.observeActions();
     try {
       return await this.botDecide(p, req);
@@ -508,6 +514,11 @@ class Game {
 
   botAction(p, req) {
     const opts = (req.options || []).filter(o => (o.cardId !== undefined || o.action) && o.mode !== 'zhangba');
+    const persona = this.botPersona(p);
+    const attack = (o, t) => {
+      if (persona === 'hunter' && t) p.marks.botFocus = t;
+      return { action: 'play', cardId: o.cardId, as: o.as, targets: [t] };
+    };
     const enemyTarget = (o) => {
       const cands = (o.targets || []).map(id => this.players.find(x => x.id === id)).filter(t => t && this.isEnemy(p, t));
       if (!cands.length) return null;
@@ -522,21 +533,45 @@ class Game {
     if (wuzhong) return { action: 'play', cardId: wuzhong.cardId, as: wuzhong.as, targets: [] };
     const wugu = opts.find(o => o.as === '五谷丰登');
     if (wugu && p.hand.length < 3) return { action: 'play', cardId: wugu.cardId, as: '五谷丰登', targets: [] };
+    // 玄德/仲谋/献帝：残血时自保，不主动拉仇恨
+    if (persona === 'defensive' && p.hp <= 2) return { action: 'end' };
+    // 反贼优先对主公出手
+    if (p.identity === 'rebel') {
+      const lord = this.players.find(q => q.alive && q.identity === 'lord');
+      if (lord) {
+        const lordSha = opts.find(o => o.as === '杀' && (o.targets || []).includes(lord.id));
+        if (lordSha && Math.random() < 0.9) return attack(lordSha, lord.id);
+        const lordTrick = opts.find(o => ['决斗', '火攻', '顺手牵羊', '过河拆桥', '借刀杀人'].includes(o.as) && (o.targets || []).includes(lord.id));
+        if (lordTrick && Math.random() < 0.8) return attack(lordTrick, lord.id);
+      }
+    }
+    // 文和/孟德/仲达做内奸时先隔岸观火，只收割残血
+    if (persona === 'hunter' && p.identity === 'spy' && !this.enemies(p).some(t => t.hp <= 2)) return { action: 'end' };
     const isHuatuo = p.general && p.general.id === 'huatuo';
     const prefer = (list) => {
       if (!isHuatuo || !list.length) return list[0];
       return list.find(o => o.suit !== '♥' && o.suit !== '♦') || list[0];
     };
     const sha = prefer(opts.filter(o => o.as === '杀' && enemyTarget(o)));
-    if (sha && Math.random() < 0.9) { const t = enemyTarget(sha); return { action: 'play', cardId: sha.cardId, as: sha.as, targets: [t] }; }
+    if (sha && Math.random() < 0.9) { const t = enemyTarget(sha); return attack(sha, t); }
     for (const kind of ['借刀杀人', '决斗', '火攻', '顺手牵羊', '过河拆桥', '乐不思蜀', '兵粮寸断']) {
       const o = prefer(opts.filter(x => x.as === kind && enemyTarget(x)));
-      if (o) { const t = enemyTarget(o); return { action: 'play', cardId: o.cardId, as: o.as, targets: [t] }; }
+      if (o) { const t = enemyTarget(o); return attack(o, t); }
     }
     const aoe = opts.find(o => o.as === '南蛮入侵' || o.as === '万箭齐发');
     if (aoe && this.enemies(p).length >= this.allies(p).length) return { action: 'play', cardId: aoe.cardId, as: aoe.as, targets: [] };
     const taoyuan = opts.find(o => o.as === '桃园结义');
     if (taoyuan && p.hp < p.maxHp) return { action: 'play', cardId: taoyuan.cardId, as: '桃园结义', targets: [] };
+    // 云长/翼德/奉先：无法判断时主动试探打开局面
+    if (persona === 'aggressive') {
+      const off = opts.filter(o => o.cardId !== undefined && (o.targets || []).length &&
+        (o.as === '杀' || ['决斗', '火攻', '顺手牵羊', '过河拆桥', '借刀杀人'].includes(o.as)));
+      if (off.length) {
+        const o = off[Math.floor(Math.random() * off.length)];
+        const t = (o.targets || [])[Math.floor(Math.random() * (o.targets || []).length)];
+        if (t) return attack(o, t);
+      }
+    }
     const skills = req.skills || [];
     if (skills.length && Math.random() < 0.35) {
       return { action: 'skill', skill: skills[Math.floor(Math.random() * skills.length)].id };
@@ -556,6 +591,13 @@ class Game {
     if ((p.identity === 'lord' || p.identity === 'loyal') && this.isEnemy(p, t)) s -= this._score(p, t) * 4;
     // 反贼在打不到主公时优先收残血忠臣/内奸
     if (p.identity === 'rebel' && this.isEnemy(p, t) && t.hp <= 2) s -= 30;
+    // bot 性格
+    const persona = this.botPersona(p);
+    if (persona === 'hunter' && p.marks.botFocus === t.id) s -= 30;
+    if (persona === 'hunter' && this.isEnemy(p, t) && t.hp <= 2) s -= 25;
+    if (persona === 'defensive' && p.hp <= 2) s += 30;
+    if (persona === 'cautious' && this.isEnemy(p, t)) s -= this._score(p, t) * 2;
+    if (persona === 'aggressive' && this.isEnemy(p, t)) s -= 10;
     return s;
   }
 
@@ -930,6 +972,11 @@ class Game {
     if (p.identity === 'rebel' && source && source.alive && source !== p) {
       this.draw(source, 3);
       this.log(`【击杀反贼】：${source.name} 摸三张牌`);
+    }
+    if (p.identity === 'loyal' && source && source.alive && source.identity === 'lord' && source !== p) {
+      const hand = source.hand.splice(0);
+      for (const c of hand) this.toDiscard(c);
+      this.log(`【主公误杀忠臣】：${source.name} 弃置所有手牌`);
     }
     await this.trigger('death', p, { source, handCount });
     // 弃置所有牌
