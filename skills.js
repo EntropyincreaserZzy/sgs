@@ -547,6 +547,10 @@ const TRIGGERS = {
       const pa = g.players.find(x => x.id === a);
       const pb = g.players.find(x => x.id === b);
       if (!pa || !pb || !pa.alive || !pb.alive) return;
+      if (!pa.hand.length || !pb.hand.length) {
+        g.log('密诏拼点：有一方没有手牌，拼点取消');
+        return;
+      }
       const ca = pa.hand.length ? await g.askCards(pa, 1, '密诏拼点：选择一张手牌') : [];
       const cb = pb.hand.length ? await g.askCards(pb, 1, '密诏拼点：选择一张手牌') : [];
       const va = ca[0] ? g.rankNum(ca[0].rank) : 0;
@@ -911,7 +915,7 @@ const ACTIVE = {
       const a = await g.askTarget(p, others, '密诏：选择获得手牌的角色', { harmful: false });
       if (!a) return;
       g.removeFromHand(p, cs[0]); await g.gain(a, [cs[0]], 'mizhao');
-      const b = await g.askTarget(p, others.filter(q => q !== a), '密诏：选择拼点对手', { harmful: true });
+      const b = await g.askTarget(p, others.filter(q => q !== a && q.hand.length > 0), '密诏：选择拼点对手', { harmful: true });
       if (!b) return;
       p.used.mizhao = true;
       p.marks.mizhao = { a: a.id, b: b.id };

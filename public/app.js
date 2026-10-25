@@ -15,6 +15,11 @@ const S = {
   arrange: null, arrangeKey: null, dragId: null, thinkTimer: null,
   lastPlaySeq: 0, lastPlayRoom: null,
   lastDrawSeq: 0, lastDrawRoom: null,
+  lastSkillSeq: 0, lastSkillRoom: null,
+  handViewSeq: 0, handViewRoom: null,
+  bgmOn: localStorage.getItem('sgs_bgm_on') !== '0',
+  bgmVolume: Math.min(1, Math.max(0, Number(localStorage.getItem('sgs_bgm_volume') || 0.35))),
+  bgmTrack: null, bgmStarted: false,
   tableCard: null, tableCardAt: 0, tableCardTimer: null, tableCardRoom: null,
   zhangba: null, zhangbaSel: [],
   account: null, authView: 'auth', authTab: 'login', authError: '', authBusy: false,
@@ -73,6 +78,8 @@ function bindHome() {
   $('#nav-home').addEventListener('click', () => goHome());
   $('#nav-encyclopedia').addEventListener('click', () => { showScreen('enc'); renderEncyclopedia(); });
   $('#nav-account').addEventListener('click', () => { if (S.account) openProfile(); else openAuth('login'); });
+  $('#nav-settings').addEventListener('click', openSettings);
+  bindBgm();
 }
 
 function bindAuth() {
@@ -299,6 +306,60 @@ function applyState(st) {
   render();
   handlePlayAnim(st);
   handleDrawAnim(st);
+  handleSkillAnim(st);
+  handleHandView(st);
+}
+
+const BGM_SONGS = { menu: '33789445', game: '33789457' };
+function openSettings() {
+  syncBgmUI();
+  $('#settings-modal')?.classList.remove('hidden');
+}
+function bindBgm() {
+  const a = document.getElementById('bgm');
+  if (!a) return;
+  a.volume = S.bgmVolume;
+  const toggle = $('#bgm-toggle');
+  const vol = $('#bgm-volume');
+  if (toggle) toggle.addEventListener('click', () => {
+    S.bgmOn = !S.bgmOn;
+    localStorage.setItem('sgs_bgm_on', S.bgmOn ? '1' : '0');
+    syncBgmUI();
+    applyBgm(S.bgmTrack || (S.view === 'game' ? 'game' : 'menu'));
+  });
+  if (vol) {
+    vol.value = Math.round(S.bgmVolume * 100);
+    vol.addEventListener('input', e => {
+      S.bgmVolume = Number(e.target.value) / 100;
+      localStorage.setItem('sgs_bgm_volume', String(S.bgmVolume));
+      if (a) a.volume = S.bgmVolume;
+    });
+  }
+  const first = () => {
+    if (S.bgmStarted) return;
+    S.bgmStarted = true;
+    applyBgm(S.view === 'game' ? 'game' : 'menu');
+  };
+  document.addEventListener('pointerdown', first, { once: true });
+}
+function syncBgmUI() {
+  const toggle = $('#bgm-toggle');
+  const label = $('#bgm-track');
+  if (toggle) toggle.textContent = S.bgmOn ? '关闭' : '开启';
+  if (label) label.textContent = S.bgmTrack === 'game' ? '对局' : '主界面';
+}
+function applyBgm(track) {
+  const a = document.getElementById('bgm');
+  if (!a) return;
+  const t = track === 'game' ? 'game' : 'menu';
+  if (S.bgmTrack !== t) {
+    S.bgmTrack = t;
+    a.src = `https://music.163.com/song/media/outer/url?id=${BGM_SONGS[t]}.mp3`;
+    syncBgmUI();
+  }
+  a.volume = S.bgmVolume;
+  if (S.bgmOn) a.play().catch(() => {});
+  else a.pause();
 }
 
 function showScreen(name) {
@@ -308,6 +369,7 @@ function showScreen(name) {
     const el = $('#screen-' + id);
     if (el) el.classList.toggle('hidden', id !== name);
   }
+  if (S.bgmStarted || S.bgmOn) applyBgm(name === 'game' ? 'game' : 'menu');
 }
 
 function goHome() {
@@ -677,6 +739,34 @@ function showPlayAnim(ev) {
   setTimeout(() => wrap.remove(), ev.equip ? 1500 : 1100);
 }
 
+function handleSkillAnim(st) {
+  if (S.lastSkillRoom !== st.code) { S.lastSkillRoom = st.code; S.lastSkillSeq = 0; }
+  const ev = st.game && st.game.lastSkill;
+  if (!ev || ev.seq === S.lastSkillSeq) return;
+  S.lastSkillSeq = ev.seq;
+  if (S.view !== 'game') return;
+  const old = document.getElementById('skill-anim');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'skill-anim';
+  el.className = 'skill-anim';
+  el.innerHTML = `<span>${esc(ev.playerName)}</span> 发动【${esc(ev.name)}】`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+}
+
+function handleHandView(st) {
+  if (S.handViewRoom !== st.code) { S.handViewRoom = st.code; S.handViewSeq = 0; }
+  const hv = st.game && st.game.handView;
+  if (!hv || hv.seq === S.handViewSeq) return;
+  S.handViewSeq = hv.seq;
+  const cards = (hv.cards || []).map(c => cardHtml(c)).join('');
+  const title = hv.mode === 'reveal' ? '展示手牌' : '观看手牌';
+  const who = hv.mode === 'reveal' ? `${esc(hv.targetName)} 展示了手牌` : `${esc(hv.targetName)} 的手牌`;
+  $('#hand-view-content').innerHTML = `<div class="auth-title">${title}</div><div class="auth-sub">${who}${hv.mode === 'reveal' ? '' : '（仅观看者与被观看者可见）'}</div><div class="hand-view-cards">${cards || '<div class="profile-empty">没有手牌</div>'}</div><div class="profile-actions"><button class="btn small" data-act="close-hand-view">关闭</button></div>`;
+  $('#hand-view-modal').classList.remove('hidden');
+}
+
 function handleDrawAnim(st) {
   if (!st || !st.game || !st.game.lastDraw) return;
   if (S.lastDrawRoom !== st.code) { S.lastDrawRoom = st.code; S.lastDrawSeq = 0; }
@@ -756,6 +846,7 @@ function seatHtml(p, n, i, g, youIndex) {
   if (p.charge !== undefined) marks.push(`<span class="mini-tag mark">充能${p.charge}</span>`);
   if (p.qingguoLevel) marks.push(`<span class="mini-tag mark">倾国${p.qingguoLevel}</span>`);
   return `<div class="${cls}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%" data-act="seat" data-pid="${p.id}">
+    ${p.id === g.turn ? '<div class="seat-turn-tag">行动中</div>' : ''}
     <div class="seat-top">
       <div class="avatar ${factionClass(p.general.faction)}" data-avatar-pid="${p.id}" title="右键查看技能"><img src="/portraits/${p.general.id}.jpg" alt="${esc(p.general.name)}" onerror="this.remove()"><span class="avatar-letter">${esc(p.general.name[0] || '?')}</span></div>
       <div class="seat-namebox">
@@ -1194,6 +1285,8 @@ document.addEventListener('click', (e) => {
   if (act === 'open-auth') return openAuth(el.dataset.tab || 'login');
   if (act === 'open-profile') return openProfile();
   if (act === 'close-auth') return closeAuth();
+  if (act === 'close-settings') { $('#settings-modal')?.classList.add('hidden'); return; }
+  if (act === 'close-hand-view') { $('#hand-view-modal')?.classList.add('hidden'); return; }
   if (act === 'auth-tab') { S.authTab = el.dataset.tab === 'register' ? 'register' : 'login'; S.authError = ''; renderAuth(); return; }
   if (act === 'do-auth') return doAuth();
   if (act === 'logout') return logout();

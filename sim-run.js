@@ -6,7 +6,7 @@ const IDENTS = {
   5: ['lord', 'loyal', 'rebel', 'rebel', 'spy'],
   8: ['lord', 'loyal', 'loyal', 'rebel', 'rebel', 'rebel', 'rebel', 'spy'],
 };
-const stats = { generals: {} };
+const stats = { generals: {}, bots: {} };
 for (const mode of [5, 8]) {
   for (const id of IDENTS[mode]) {
     stats[id] = stats[id] || { m5g: 0, m5w: 0, m8g: 0, m8w: 0, games: 0, wins: 0, timeouts: 0 };
@@ -44,6 +44,9 @@ function run(mode) {
         const gs = stats.generals[p.general] || (stats.generals[p.general] = { games: 0, wins: 0 });
         gs.games++;
         if (winners.has(p.identity)) gs.wins++;
+        const bs = stats.bots[p.botId] || (stats.bots[p.botId] = { name: p.botName || p.botId, games: 0, wins: 0 });
+        bs.games++;
+        if (winners.has(p.identity)) bs.wins++;
       }
       if ((i + 1) % 10 === 0) console.log(`mode ${mode} done ${i + 1}/150`);
     }

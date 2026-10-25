@@ -54,6 +54,8 @@ class Game {
     this.over = false;
     this.playSeq = 0;
     this.lastPlay = null;
+    this.skillSeq = 0;
+    this.lastSkill = null;
     this.tableCard = null;
     this.drawSeq = 0;
     this.lastDraw = null;
@@ -63,6 +65,7 @@ class Game {
     this.botDelay = true;
     this._bel = new Map();
     this._obsSeq = 0;
+    this.handView = null;
   }
 
   // ---------- 基础 ----------
@@ -157,6 +160,19 @@ class Game {
     m.set(b.id, (m.get(b.id) || 0) + d);
   }
 
+  setHandView(viewer, target, mode = 'view', cards = null) {
+    if (!viewer || !target) return;
+    this.handView = {
+      seq: ++this.playSeq,
+      viewerId: viewer.id,
+      targetId: target.id,
+      targetName: target.general.name,
+      mode,
+      cards: (cards || target.hand).map(c => this.publicCard(c)),
+    };
+    this.broadcast();
+  }
+
   observeActions() {
     const lp = this.lastPlay;
     if (!lp || !lp.seq || lp.seq <= this._obsSeq) return;
@@ -171,6 +187,12 @@ class Game {
       if (!b) continue;
       if (OFF.includes(kind)) { this._bump(a, b, 2); this._bump(b, a, 2); }
       else if (HELP.includes(kind)) { this._bump(a, b, -1); this._bump(b, a, -1); }
+      // 军八：主忠内对“主动进攻主公”的人产生极高敌意，优先联合打反贼
+      if (this.mode === 8 && b.identity === 'lord' && OFF.includes(kind)) {
+        for (const q of this.alive()) {
+          if (q.identity === 'lord' || q.identity === 'loyal' || q.identity === 'spy') this._bump(q, a, 12);
+        }
+      }
     }
   }
 
@@ -758,6 +780,8 @@ class Game {
   async useZhangba(p) {
     const cards = this.zhangbaCards(p);
     if (cards.length < 2) return;
+    this.lastSkill = { seq: ++this.skillSeq, playerId: p.id, playerName: p.general.name, name: '丈八蛇矛', at: Date.now() };
+    this.broadcast();
     const cs = await this.askCardsFromAll(p, 2, '丈八蛇矛：选择两张牌当【杀】', { validCards: cards });
     if (cs.length < 2) return;
     const valid = this.validTargets(p, '杀', cs[0]);
@@ -771,7 +795,10 @@ class Game {
     if (sid === 'zhangba') { await this.useZhangba(p); return; }
     const a = ACTIVE[sid];
     if (!a || !this.hasSkill(p, sid) || !a.canUse(this, p)) return;
-    this.log(`${p.name} 发动【${(p.general.skills.find(s => s.id === sid) || {}).name || sid}】`);
+    const name = (p.general.skills.find(s => s.id === sid) || {}).name || sid;
+    this.lastSkill = { seq: ++this.skillSeq, playerId: p.id, playerName: p.general.name, name, at: Date.now() };
+    this.broadcast();
+    this.log(`${p.name} 发动【${name}】`);
     await a.use(this, p, act || {});
   }
 
@@ -827,9 +854,11 @@ class Game {
       targets: opts.opponentId ? [opts.opponentId] : [],
     };
     if (!opts.raw) {
+      await this.trigger('cardPlayStart', p, { card, as: need });
       this.toDiscard(card);
       this.log(`${p.name} 打出【${card.name}】${card.name !== need ? `（当【${need}】）` : ''}`);
       await this.trigger('cardUsed', p, { card, as: need });
+      await this.trigger('cardPlayed', p, { card, as: need });
     }
     return card;
   }
@@ -1122,7 +1151,9 @@ class Game {
         if (p.alive) await this.judge(p, '英才');
       }
     }
+    await this.trigger('cardUseStart', p, { card, as, targets: targetObjs, cards: usedCards });
     await this.trigger('useCard', p, { card, as, targets: targetObjs, cards: usedCards });
+    await this.trigger('cardResolveStart', p, { card, as, targets: targetObjs, cards: usedCards });
     await this.useCard(p, card, as, targetObjs, usedCards);
     for (const c of usedCards) {
       if (c._claimed) continue;
@@ -1136,6 +1167,8 @@ class Game {
       }
       if (!(c.type === 'equip' && as === c.name)) this.toDiscard(c);
     }
+    await this.trigger('cardResolveEnd', p, { card, as, targets: targetObjs, cards: usedCards });
+    await this.trigger('cardAfter', p, { card, as, targets: targetObjs, cards: usedCards });
     this.tableCard = null;
     this.broadcast();
     return true;
@@ -1291,6 +1324,7 @@ class Game {
       let show = t.hand[0];
       if (ans && ans.cardIds && ans.cardIds[0]) show = t.hand.find(c => c.id === ans.cardIds[0]) || show;
       this.log(`${t.name} 展示【${show.name}】(${show.suit})`);
+      this.setHandView(t, t, 'reveal', [show]);
       const same = p.hand.filter(c => c.suit === show.suit);
       if (same.length) {
         const pick = await this.ask(p, { type: 'cards', prompt: `是否弃置一张${show.suit}牌造成火焰伤害？`, count: 1, validCards: same.map(c => this.publicCard(c)), optional: true });
@@ -1377,6 +1411,9 @@ class Game {
     if (!target || !target.alive) return target;
     const ctx = { source: user, card, as, targets: allTargets || [target] };
     await this.trigger('targeted', target, ctx);
+    // 天命：刘协观看成为【杀】目标的角色的手牌（仅刘协与目标可见）
+    const tianmingViewer = this.alive().find(q => q !== target && this.hasSkill(q, 'tianming'));
+    if (tianmingViewer && target.alive) this.setHandView(tianmingViewer, target, 'view');
     if (ctx.redirect && ctx.redirect.alive) {
       this.log(`【流离】：${target.name} 将目标转移给 ${ctx.redirect.name}`);
       return ctx.redirect;
@@ -1642,27 +1679,39 @@ class Game {
     p.used = {};
     this.log(`—— ${p.name} 的回合${this.isExtraTurn ? '（额外）' : ''} ——`);
     this.phase = 'start'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'start' });
     await this.trigger('turnStart', p, {});
+    await this.trigger('phaseEnd', p, { phase: 'start' });
     if (this.winner || !p.alive) { this.cleanupTurnFlags(); this.broadcast(); return; }
     this.phase = 'judge'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'judge' });
     await this.judgePhase(p);
+    await this.trigger('phaseEnd', p, { phase: 'judge' });
     if (this.winner || !p.alive) { this.cleanupTurnFlags(); this.broadcast(); return; }
     this.phase = 'draw'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'draw' });
     await this.drawPhase(p);
+    await this.trigger('phaseEnd', p, { phase: 'draw' });
     if (this.winner || !p.alive) { this.cleanupTurnFlags(); this.broadcast(); return; }
     this.phase = 'play'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'play' });
     await this.trigger('playStart', p, {});
     await this.jiuyuan(p);
     if (!p.flags.skipPlay) await this.playPhase(p);
     else this.log(`${p.name} 跳过出牌阶段`);
     await this.trigger('playEnd', p, {});
+    await this.trigger('phaseEnd', p, { phase: 'play' });
     if (this.winner || !p.alive) { this.cleanupTurnFlags(); this.broadcast(); return; }
     this.phase = 'discard'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'discard' });
     await this.discardPhase(p);
+    await this.trigger('phaseEnd', p, { phase: 'discard' });
     if (!p.alive) { this.cleanupTurnFlags(); this.broadcast(); return; }
     this.phase = 'end'; this.broadcast();
+    await this.trigger('phaseStart', p, { phase: 'end' });
     await this.trigger('turnEnd', p, {});
     await this.triggerAll('otherTurnEnd', { player: p }, q => q !== p);
+    await this.trigger('phaseEnd', p, { phase: 'end' });
     this.cleanupTurnFlags();
     this.broadcast();
   }
@@ -1861,7 +1910,9 @@ class Game {
       discardTop: this.discardPile.length ? this.publicCard(this.discardPile[this.discardPile.length - 1]) : null,
       winner: this.winner,
       lastPlay: this.lastPlay,
+      lastSkill: this.lastSkill,
       lastDraw: this.lastDraw,
+      handView: this.handView && (this.handView.mode === 'reveal' || this.handView.viewerId === pid || this.handView.targetId === pid) ? this.handView : null,
       tableCard: this.tableCard,
       identities: this.winner ? this.players.map(p => ({ id: p.id, identity: p.identity })) : null,
       allHands: this.winner ? this.players.map(p => ({ id: p.id, hand: p.hand.map(c => this.publicCard(c)) })) : null,
