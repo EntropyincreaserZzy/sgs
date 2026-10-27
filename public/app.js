@@ -348,13 +348,22 @@ function syncBgmUI() {
   if (toggle) toggle.textContent = S.bgmOn ? '关闭' : '开启';
   if (label) label.textContent = S.bgmTrack === 'game' ? '对局' : '主界面';
 }
+const BGM_LOCAL = { menu: '/music/menu.mp3', game: '/music/game.mp3' };
 function applyBgm(track) {
   const a = document.getElementById('bgm');
   if (!a) return;
   const t = track === 'game' ? 'game' : 'menu';
-  if (S.bgmTrack !== t) {
+  if (S.bgmTrack !== t || a.dataset.track !== t) {
     S.bgmTrack = t;
-    a.src = `https://music.163.com/song/media/outer/url?id=${BGM_SONGS[t]}.mp3`;
+    a.dataset.track = t;
+    a.dataset.fallback = '';
+    a.onerror = () => {
+      if (a.dataset.fallback === '1') return;
+      a.dataset.fallback = '1';
+      a.src = `https://music.163.com/song/media/outer/url?id=${BGM_SONGS[t]}.mp3`;
+      if (S.bgmOn) a.play().catch(() => {});
+    };
+    a.src = BGM_LOCAL[t];
     syncBgmUI();
   }
   a.volume = S.bgmVolume;
