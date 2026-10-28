@@ -103,6 +103,7 @@ const TRIGGERS = {
   tishen: {
     turnStart: async (g, p) => {
       if (p.limitedUsed.tishen) return;
+      if (p.isBot && p.hp > 2) return;
       if (!(await yesNo(g, p, '是否发动【替身】？'))) return;
       p.limitedUsed.tishen = true;
       const healed = p.maxHp - p.hp;

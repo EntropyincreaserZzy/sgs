@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>三国杀 · 军争 · v1.1.5</title>
+<title>三国·军争 · v1.1.6</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,13 +11,12 @@
   <div class="bg-ink"></div>
   <header class="topbar">
     <div class="brand" id="brand">
-      <span class="brand-seal">杀</span>
-      <span class="brand-title">三国杀<span class="brand-sub">军争</span><span class="brand-version">v1.1.5</span></span>
+      <span class="brand-seal">爭</span>
+      <span class="brand-title">三国<span class="brand-sub">·军争</span><span class="brand-version">v1.1.6</span></span>
     </div>
     <nav class="topnav">
       <button class="nav-btn" id="nav-home">大厅</button>
       <button class="nav-btn" id="nav-encyclopedia">武将 · 牌堆</button>
-      <button class="nav-btn" id="nav-settings">设置</button>
       <button class="nav-btn account-btn" id="nav-account">登录 / 注册</button>
     </nav>
   </header>
@@ -27,10 +26,10 @@
     <section id="screen-home" class="screen">
       <div class="home-hero">
         <div class="hero-seal">漢</div>
-        <h1 class="hero-title">三国杀<span>军争</span></h1>
+        <h1 class="hero-title">三国<span>·军争</span></h1>
         <p class="hero-sub">煮酒论英雄 · 八人军争 · 三十二将</p>
+        <p class="hero-author">作者：熵增反应</p>
       </div>
-      <p class="home-filing">已提交 ICP 备案，审核通过后可在 <a href="https://sjsgs.xyz/">sjsgs.xyz</a> 游玩；当前临时地址：<a href="http://47.117.135.24/">47.117.135.24</a></p>
       <div class="home-panel">
         <label class="field-label">你的昵称</label>
         <input id="input-name" class="input" maxlength="12" placeholder="例如：卧龙先生" autocomplete="off">
@@ -75,18 +74,8 @@
       <div id="auth-content"></div>
     </div>
   </div>
-  <audio id="bgm" loop preload="none"></audio>
-  <div id="settings-modal" class="modal settings-modal hidden" data-act="close-settings">
-    <div class="settings-card" data-act="noop">
-      <button class="auth-close" data-act="close-settings">×</button>
-      <div class="auth-title">设置</div>
-      <div class="settings-row"><span>背景音乐</span><button class="btn small" id="bgm-toggle">开启</button></div>
-      <div class="settings-row"><span>音量</span><input id="bgm-volume" type="range" min="0" max="100" value="35"></div>
-      <div class="settings-row"><span>当前曲目</span><span id="bgm-track">主界面</span></div>
-      <div class="settings-hint">主界面与对局使用不同曲目；音乐来自网易云，若无法加载可稍后重试。</div>
-    </div>
-  </div>
-  <div id="hand-view-modal" class="modal hand-view-modal hidden" data-act="close-hand-view">    <div class="hand-view-card" data-act="noop">
+  <div id="hand-view-modal" class="modal hand-view-modal hidden" data-act="close-hand-view">
+    <div class="hand-view-card" data-act="noop">
       <button class="auth-close" data-act="close-hand-view">×</button>
       <div id="hand-view-content"></div>
     </div>

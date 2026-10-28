@@ -17,9 +17,6 @@ const S = {
   lastDrawSeq: 0, lastDrawRoom: null,
   lastSkillSeq: 0, lastSkillRoom: null,
   handViewSeq: 0, handViewRoom: null,
-  bgmOn: localStorage.getItem('sgs_bgm_on') !== '0',
-  bgmVolume: Math.min(1, Math.max(0, Number(localStorage.getItem('sgs_bgm_volume') || 0.35))),
-  bgmTrack: null, bgmStarted: false,
   tableCard: null, tableCardAt: 0, tableCardTimer: null, tableCardRoom: null,
   zhangba: null, zhangbaSel: [],
   account: null, authView: 'auth', authTab: 'login', authError: '', authBusy: false,
@@ -78,8 +75,6 @@ function bindHome() {
   $('#nav-home').addEventListener('click', () => goHome());
   $('#nav-encyclopedia').addEventListener('click', () => { showScreen('enc'); renderEncyclopedia(); });
   $('#nav-account').addEventListener('click', () => { if (S.account) openProfile(); else openAuth('login'); });
-  $('#nav-settings').addEventListener('click', openSettings);
-  bindBgm();
 }
 
 function bindAuth() {
@@ -310,67 +305,6 @@ function applyState(st) {
   handleHandView(st);
 }
 
-const BGM_SONGS = { menu: '33789445', game: '33789457' };
-function openSettings() {
-  syncBgmUI();
-  $('#settings-modal')?.classList.remove('hidden');
-}
-function bindBgm() {
-  const a = document.getElementById('bgm');
-  if (!a) return;
-  a.volume = S.bgmVolume;
-  const toggle = $('#bgm-toggle');
-  const vol = $('#bgm-volume');
-  if (toggle) toggle.addEventListener('click', () => {
-    S.bgmOn = !S.bgmOn;
-    localStorage.setItem('sgs_bgm_on', S.bgmOn ? '1' : '0');
-    syncBgmUI();
-    applyBgm(S.bgmTrack || (S.view === 'game' ? 'game' : 'menu'));
-  });
-  if (vol) {
-    vol.value = Math.round(S.bgmVolume * 100);
-    vol.addEventListener('input', e => {
-      S.bgmVolume = Number(e.target.value) / 100;
-      localStorage.setItem('sgs_bgm_volume', String(S.bgmVolume));
-      if (a) a.volume = S.bgmVolume;
-    });
-  }
-  const first = () => {
-    if (S.bgmStarted) return;
-    S.bgmStarted = true;
-    applyBgm(S.view === 'game' ? 'game' : 'menu');
-  };
-  document.addEventListener('pointerdown', first, { once: true });
-}
-function syncBgmUI() {
-  const toggle = $('#bgm-toggle');
-  const label = $('#bgm-track');
-  if (toggle) toggle.textContent = S.bgmOn ? '关闭' : '开启';
-  if (label) label.textContent = S.bgmTrack === 'game' ? '对局' : '主界面';
-}
-const BGM_LOCAL = { menu: '/music/menu.mp3', game: '/music/game.mp3' };
-function applyBgm(track) {
-  const a = document.getElementById('bgm');
-  if (!a) return;
-  const t = track === 'game' ? 'game' : 'menu';
-  if (S.bgmTrack !== t || a.dataset.track !== t) {
-    S.bgmTrack = t;
-    a.dataset.track = t;
-    a.dataset.fallback = '';
-    a.onerror = () => {
-      if (a.dataset.fallback === '1') return;
-      a.dataset.fallback = '1';
-      a.src = `https://music.163.com/song/media/outer/url?id=${BGM_SONGS[t]}.mp3`;
-      if (S.bgmOn) a.play().catch(() => {});
-    };
-    a.src = BGM_LOCAL[t];
-    syncBgmUI();
-  }
-  a.volume = S.bgmVolume;
-  if (S.bgmOn) a.play().catch(() => {});
-  else a.pause();
-}
-
 function showScreen(name) {
   S.view = name;
   if (name !== 'game') stopThinkClock();
@@ -378,7 +312,6 @@ function showScreen(name) {
     const el = $('#screen-' + id);
     if (el) el.classList.toggle('hidden', id !== name);
   }
-  if (S.bgmStarted || S.bgmOn) applyBgm(name === 'game' ? 'game' : 'menu');
 }
 
 function goHome() {
@@ -769,6 +702,8 @@ function handleHandView(st) {
   const hv = st.game && st.game.handView;
   if (!hv || hv.seq === S.handViewSeq) return;
   S.handViewSeq = hv.seq;
+  const me = st.game.you && st.game.you.id;
+  if (hv.mode !== 'reveal' && hv.viewerId !== me && hv.targetId !== me) return;
   const cards = (hv.cards || []).map(c => cardHtml(c)).join('');
   const title = hv.mode === 'reveal' ? '展示手牌' : '观看手牌';
   const who = hv.mode === 'reveal' ? `${esc(hv.targetName)} 展示了手牌` : `${esc(hv.targetName)} 的手牌`;
@@ -1294,7 +1229,6 @@ document.addEventListener('click', (e) => {
   if (act === 'open-auth') return openAuth(el.dataset.tab || 'login');
   if (act === 'open-profile') return openProfile();
   if (act === 'close-auth') return closeAuth();
-  if (act === 'close-settings') { $('#settings-modal')?.classList.add('hidden'); return; }
   if (act === 'close-hand-view') { $('#hand-view-modal')?.classList.add('hidden'); return; }
   if (act === 'auth-tab') { S.authTab = el.dataset.tab === 'register' ? 'register' : 'login'; S.authError = ''; renderAuth(); return; }
   if (act === 'do-auth') return doAuth();

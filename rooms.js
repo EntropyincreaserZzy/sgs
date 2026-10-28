@@ -52,7 +52,7 @@ class Room {
     if (this.seats.includes(null) === false) return { error: '房间已满' };
     if (this.players.has(p.id)) return { error: '已在房间中' };
     const seat = this.seats.indexOf(null);
-    const player = { id: p.id, name: p.name, isBot: false, token: p.token, seat, connected: true, accountId: p.accountId || null };
+    const player = { id: p.id, name: p.name, isBot: false, token: p.token, seat, connected: true, accountId: p.accountId || null, isTest: !!p.isTest };
     this.seats[seat] = player;
     this.players.set(p.id, player);
     return { seat };
@@ -366,6 +366,8 @@ class RoomManager {
   findPublic(mode) {
     for (const room of this.rooms.values()) {
       if (room.mode !== mode || room.phase !== 'lobby') continue;
+      const host = room.players.get(room.host);
+      if (host && (host.isTest || String(host.name).toLowerCase() === 'test')) continue;
       if (room.seats.some(s => !s)) return room;
     }
     return null;

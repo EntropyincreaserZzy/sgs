@@ -22,7 +22,6 @@ const MIME = {
   '.json': 'application/json; charset=utf-8',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
-  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
 };
 
 const SECURITY_HEADERS = {
@@ -30,7 +29,7 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; media-src 'self' https://music.163.com https://*.music.163.com http://*.music.126.net https://*.music.126.net; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
 function secHeaders(res) {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
@@ -173,6 +172,8 @@ const server = http.createServer(async (req, res) => {
     const mode = Number(body.mode) === 5 ? 5 : 8;
     const action = body.action;
     const player = newPlayer(name, account ? account.id : null);
+    player.isTest = !!(account && String(account.username).toLowerCase() === 'test')
+      || (!account && String(name).toLowerCase() === 'test');
     let room = null;
     let already = false;
     if (action === 'join') {
