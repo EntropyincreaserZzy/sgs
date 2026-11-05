@@ -4,7 +4,9 @@
 
 > 版本：**1.1.6** · 更新日志：[CHANGELOG.md](CHANGELOG.md) · 启动：`npm start` 或 `node server.js`（Windows 可双击 `start.bat`）
 
-> **备案状态**：已提交 ICP 备案，审核通过后可在 <https://sjsgs.xyz/> 游玩；审核期间临时地址：<http://47.117.135.24/>。
+> 🎉 **现在可以直接玩了：<https://sjsgs.xyz/>**
+>
+> ICP 备案已通过（津ICP备2026016622号）；公安联网备案已提交，审核中。
 
 ## 1.1.6 更新公告
 
@@ -57,8 +59,8 @@
 
 ### 已经部署的地址
 
-- 临时访问：<http://47.117.135.24/>
-- 正式域名：<https://sjsgs.xyz/>（已提交 ICP 备案，审核通过后启用）
+- **正式地址**：<https://sjsgs.xyz/>（已上线，可直接游玩）
+- 旧 IP：<http://47.117.135.24/>（保留作为备用入口）
 - 服务器更新：`cd /opt/sgs && git pull && systemctl restart sgs`，账号数据在 `/opt/sgs/data`。
 
 ### 公网部署
